@@ -235,11 +235,11 @@
                 <div class="bg-gradient-to-br from-ise-blue to-slate-800 rounded-3xl p-6 text-white card-shadow mb-6 relative overflow-hidden">
                     <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-2xl"></div>
                     <div class="relative z-10">
-                        <div class="text-xs opacity-70 mb-1 uppercase tracking-widest">Total Expenses (Est. TWD)</div>
-                        <div class="text-4xl font-bold font-mono tracking-tight mb-4">NT$ {{ totalExpenseTWD.toLocaleString() }}</div>
+                        <div class="text-xs opacity-70 mb-1 uppercase tracking-widest">總花費 (預估台幣)</div>
+                        <div class="text-4xl font-bold font-mono tracking-tight mb-4">NT$ {{ expenseStats.final.toLocaleString() }}</div>
                         <div class="flex space-x-3 mb-2">
-                            <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">CASH (JPY)</div><div class="font-bold text-sm">¥{{ expenseSummary.cash.toLocaleString() }}</div></div>
-                            <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">CARD (JPY)</div><div class="font-bold text-sm">¥{{ expenseSummary.card.toLocaleString() }}</div></div>
+                            <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">日幣總和 (JPY)</div><div class="font-bold text-sm">¥{{ expenseStats.jpy.toLocaleString() }}</div></div>
+                            <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">台幣總和 (TWD)</div><div class="font-bold text-sm">NT${{ expenseStats.twd.toLocaleString() }}</div></div>
                         </div>
                         
                         <!-- 手動匯率設定 -->
@@ -697,23 +697,19 @@
                 });
                 return grouped;
             });
-            const totalExpenseTWD = computed(() => {
-                let total = 0;
+            const expenseStats = computed(() => {
+                let totalJPY = 0;
+                let totalTWD = 0;
                 expenses.value.forEach(e => {
-                    if (e.currency === 'TWD') total += Number(e.amount);
-                    else total += Number(e.amount) * exchangeRate.value;
+                    const amt = Number(e.amount);
+                    if (e.currency === 'TWD') totalTWD += amt;
+                    else totalJPY += amt;
                 });
-                return Math.floor(total);
-            });
-            const expenseSummary = computed(() => {
-                let cash = 0, card = 0;
-                expenses.value.forEach(e => {
-                    let amountInJPY = Number(e.amount);
-                    if (e.currency === 'TWD') amountInJPY = Number(e.amount) / exchangeRate.value;
-                    if(e.payment === '現金') cash += amountInJPY;
-                    else card += amountInJPY;
-                });
-                return { cash: Math.floor(cash), card: Math.floor(card) };
+                return {
+                    jpy: Math.floor(totalJPY),
+                    twd: Math.floor(totalTWD),
+                    final: Math.floor(totalTWD + (totalJPY * exchangeRate.value))
+                };
             });
 
             // ---- 方法 ----
@@ -896,7 +892,7 @@
                 itineraryData, currentDayItinerary, currentInfoList, shoppingList, filteredShoppingList, expenses, expensesByDate,
                 showAddModal, showInfoModal, showShoppingModal, showExpenseModal, showDeleteModal,
                 newItem, newInfo, newShoppingItem, newExpense, showConfigAlert, isConnected,
-                currentWeather, weatherLoading, totalExpenseTWD, expenseSummary, exchangeRate,
+                currentWeather, weatherLoading, expenseStats, exchangeRate,
                 getWeatherIcon, getCategoryBorderColor, getCategoryBadgeColor, getCategoryIcon,
                 openMap, copyToClipboard, moveItem, requestDelete, executeDelete, 
                 isEditMode, toggleEditMode, editIndex,
