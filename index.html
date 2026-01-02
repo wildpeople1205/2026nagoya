@@ -1,2265 +1,1160 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
-  Calendar, Ticket, Wallet, ClipboardList, MapPin, Plane, Coffee, Plus, Car, 
-  Camera, BedDouble, ShoppingBag, Sun, CloudRain, CloudSun, MoreVertical, 
-  X, Navigation, GripVertical, Clock, Info, Trash2, Edit3, DollarSign, 
-  JapaneseYen, Settings, Check, Utensils, Gift, Map, Loader2, Snowflake, 
-  ExternalLink, CreditCard as CreditCardIcon, Coins, Train, UploadCloud,
-  Cloud,
-  CalendarDays,
-  ArrowRight
-} from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-// 引入我們做好的連線工具
-import { useRealtimeData } from './hooks/useRealtimeData';
-
-// --- 1. Utils ---
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-// --- 2. Styles ---
-const GlobalStyles = () => (
-  <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&display=swap');
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>李家名古屋 伊勢志摩之旅</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue.js 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Noto Sans TC -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
     
-    :root {
-      --bg-journal: #F7F4EB;
-      --color-primary: #88B04B;
-      --color-accent: #FF8C42;
-      --color-text: #4A4A4A;
-      --color-dim: #E0E5D5;
-    }
-
-    body {
-      font-family: "M PLUS Rounded 1c", sans-serif;
-      background-color: #eee;
-      color: var(--color-text);
-      margin: 0;
-    }
-
-    .app-container {
-      background-color: var(--bg-journal);
-      background-image: radial-gradient(#D7D0C0 1.5px, transparent 1.5px);
-      background-size: 24px 24px;
-      min-height: 100vh;
-    }
-
-    .shadow-soft { box-shadow: 4px 4px 0px 0px #E0E5D5; }
-    .shadow-soft-hover { box-shadow: 2px 2px 0px 0px #E0E5D5; }
-    .shadow-ticket { box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05); }
-    
-    .scrollbar-hide::-webkit-scrollbar { display: none; }
-    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-
-    .dragging { opacity: 0.5; border: 2px dashed #88B04B; }
-    
-    .input-journal {
-      width: 100%;
-      padding: 0.5rem;
-      border-radius: 0.75rem;
-      border: 2px solid #E0E5D5;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    .input-journal:focus {
-      border-color: #88B04B;
-    }
-  `}</style>
-);
-
-// --- 3. Types ---
-type EventType = 'transport' | 'sightseeing' | 'food' | 'stay' | 'shopping' | 'flight' | 'other';
-type BookingType = 'flight' | 'hotel' | 'rental';
-type CurrencyType = 'JPY' | 'TWD';
-type MustType = 'eat' | 'buy';
-type PaymentMethodType = 'cash' | 'card' | 'suica';
-
-interface TripEvent {
-  id: string;
-  time: string;
-  title: string;
-  location?: string;
-  type: EventType;
-  description?: string;
-  price?: string;
-  businessHours?: string;
-  ticketPrice?: string;
-  notes?: string;
-  icon?: React.ElementType; 
-}
-
-interface BookingItem {
-    id: string;
-    type: BookingType;
-    dateRange?: string;
-    price?: string;
-    flightNumber?: string;
-    deptCode?: string;
-    deptTime?: string;
-    arrCode?: string;
-    arrTime?: string;
-    deptTerminal?: string;
-    arrTerminal?: string;
-    airline?: string;
-    hotelName?: string;
-    platform?: string;
-    roomDetail?: string;
-    company?: string;
-    carModel?: string;
-    pickUpLoc?: string;
-    pickUpTime?: string;
-    dropOffLoc?: string;
-    dropOffTime?: string;
-}
-
-interface ExpenseItem {
-    id: string;
-    date: string;
-    title: string;
-    amount: number;
-    currency: CurrencyType;
-    category: EventType;
-    paymentMethod: PaymentMethodType;
-}
-
-interface MustItem {
-    id: string;
-    type: MustType;
-    area: string;
-    name: string;
-    location?: string;
-    note: string;
-    isCompleted: boolean;
-}
-
-interface HourlyWeather {
-    time: string;
-    temp: string;
-    icon: React.ElementType;
-    condition: string;
-}
-
-interface TripDay {
-  id: string; // Add ID for Firestore
-  date: string;
-  dayNum: number;
-  weekday: string;
-  weekdayZh?: string;
-  mainLocation: string;
-  hourlyWeather: HourlyWeather[];
-  events: TripEvent[];
-}
-
-// --- 4. Constants & Data (Defined FIRST) ---
-
-const EVENT_TYPES: {value: EventType, label: string}[] = [
-  { value: 'sightseeing', label: '景點' },
-  { value: 'stay', label: '住宿' },
-  { value: 'food', label: '美食' },
-  { value: 'shopping', label: '購物' },
-  { value: 'flight', label: '航班' },
-  { value: 'transport', label: '交通' },
-  { value: 'other', label: '其他' },
-];
-
-const BOOKING_TYPES: {value: BookingType, label: string}[] = [
-    { value: 'flight', label: '航班' },
-    { value: 'hotel', label: '住宿' },
-    { value: 'rental', label: '租車' },
-];
-
-const PAYMENT_METHODS: {value: PaymentMethodType, label: string, icon: any, color: string}[] = [
-    { value: 'cash', label: '現金', icon: Coins, color: 'text-yellow-600 bg-yellow-50' },
-    { value: 'suica', label: '西瓜卡', icon: Train, color: 'text-green-600 bg-green-50' },
-    { value: 'card', label: '信用卡', icon: CreditCardIcon, color: 'text-blue-600 bg-blue-50' },
-];
-
-const MUST_AREAS = ['名古屋', '松阪', '伊勢', '鳥羽', '志摩', '常滑', '其他'];
-
-const TYPE_STYLES: Record<EventType, { color: string; bg: string; label: string; icon: any }> = {
-  flight: { color: '#0EA5E9', bg: '#E0F2FE', label: '航班', icon: Plane },
-  transport: { color: '#3B82F6', bg: '#EFF6FF', label: '交通', icon: Car },
-  sightseeing: { color: '#F59E0B', bg: '#FFFBEB', label: '景點', icon: Camera },
-  food: { color: '#EC4899', bg: '#FDF2F8', label: '美食', icon: Coffee },
-  stay: { color: '#8B5CF6', bg: '#F5F3FF', label: '住宿', icon: BedDouble },
-  shopping: { color: '#10B981', bg: '#ECFDF5', label: '購物', icon: ShoppingBag },
-  other: { color: '#6B7280', bg: '#F3F4F6', label: '其他', icon: Info },
-};
-
-// Weather Logic
-const CITY_WEATHER_PROFILES: Record<string, { baseTemp: number, conditions: string[] }> = {
-    '津市': { baseTemp: 6, conditions: ['Sunny', 'Cloudy'] },
-    '松阪市': { baseTemp: 7, conditions: ['Sunny', 'Sunny'] },
-    '志摩市': { baseTemp: 9, conditions: ['Sunny', 'Cloudy'] }, 
-    '伊勢市': { baseTemp: 6, conditions: ['Cloudy', 'Rainy'] },
-    '名古屋市': { baseTemp: 4, conditions: ['Cloudy', 'Snowy'] }, 
-    '常滑市': { baseTemp: 7, conditions: ['Sunny', 'Windy'] },
-};
-
-const getWeatherIcon = (condition: string) => {
-    switch (condition) {
-        case 'Sunny': return Sun;
-        case 'Cloudy': return CloudSun;
-        case 'Rainy': return CloudRain;
-        case 'Snowy': return Snowflake;
-        case 'Windy': return Cloud; 
-        default: return Sun;
-    }
-};
-
-const getConditionText = (condition: string) => {
-    switch (condition) {
-        case 'Sunny': return '晴朗';
-        case 'Cloudy': return '多雲';
-        case 'Rainy': return '小雨';
-        case 'Snowy': return '小雪';
-        case 'Windy': return '強風';
-        default: return '晴';
-    }
-};
-
-const fetchWeatherForLocation = async (location: string): Promise<HourlyWeather[]> => {
-    await new Promise(resolve => setTimeout(resolve, 600));
-
-    const profile = CITY_WEATHER_PROFILES[location] || { baseTemp: 8, conditions: ['Sunny'] };
-    const data: HourlyWeather[] = [];
-    
-    for (let i = 9; i <= 18; i++) {
-        let hourTemp = profile.baseTemp;
-        if (i <= 11) hourTemp += (i - 9); 
-        else if (i <= 14) hourTemp += 3; 
-        else hourTemp += 3 - (i - 14); 
-
-        hourTemp += Math.floor(Math.random() * 2);
-        const cond = profile.conditions[Math.floor(Math.random() * profile.conditions.length)];
-
-        data.push({
-            time: `${i.toString().padStart(2, '0')}:00`,
-            temp: `${hourTemp}°`,
-            icon: getWeatherIcon(cond),
-            condition: getConditionText(cond)
-        });
-    }
-    return data;
-};
-
-// **MOVED UP**: Defined MOCK_HOURLY_WEATHER before usage
-const MOCK_HOURLY_WEATHER: HourlyWeather[] = [
-    { time: '09:00', temp: '8°', icon: Sun, condition: '晴' },
-    { time: '10:00', temp: '9°', icon: CloudSun, condition: '多雲' },
-    { time: '11:00', temp: '11°', icon: Cloud, condition: '陰' },
-    { time: '12:00', temp: '12°', icon: CloudSun, condition: '多雲' },
-    { time: '13:00', temp: '13°', icon: Sun, condition: '晴' },
-    { time: '14:00', temp: '12°', icon: Sun, condition: '晴' },
-    { time: '15:00', temp: '11°', icon: CloudRain, condition: '小雨' },
-    { time: '16:00', temp: '10°', icon: Cloud, condition: '陰' },
-];
-
-const INITIAL_TRIP_DATA: TripDay[] = [
-  {
-    id: 'day-1',
-    date: '2026-01-14',
-    dayNum: 1,
-    weekday: 'Wed',
-    weekdayZh: '週三',
-    mainLocation: '津市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-      { id: '1-1', time: '15:50', title: 'JL8670 飛往名古屋', location: '桃園機場 T2', type: 'flight', description: '抵達時間 19:25 中部國際 T1', notes: '記得預辦登機' },
-      { id: '1-2', time: '20:00', title: '取車 (日產租車)', location: '中部國際機場店', type: 'transport', description: '預約編號: RC2246... (Serena e-POWER)', price: '¥88,902' },
-      { id: '1-3', time: '21:30', title: '入住飯店', location: 'Hotel Castle Inn Tsu', type: 'stay', description: '含早餐兩間房', price: '¥15,496', businessHours: 'Check-in: 15:00' }
-    ]
-  },
-  {
-    id: 'day-2',
-    date: '2026-01-15',
-    dayNum: 2,
-    weekday: 'Thu',
-    weekdayZh: '週四',
-    mainLocation: '松阪市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-      { id: '2-1', time: '09:00', title: '前往松阪', location: '約 1 小時車程', type: 'transport', description: '停車：よいほモール第6駐車場' },
-      { id: '2-2', time: '10:00', title: '松阪觀光交流中心', location: '豪商之街', type: 'sightseeing', businessHours: '09:00-18:00', notes: '2樓有放映室(英文字幕)' },
-      { id: '2-2a', time: '10:45', title: '松阪木棉手織中心', location: '松阪市', type: 'sightseeing', description: '藍色條紋木棉布匹、手織體驗' },
-      { id: '2-2b', time: '11:15', title: '舊小津清左衛門家', location: '松阪市本町', type: 'sightseeing', description: '紙與木棉富商宅邸', ticketPrice: '¥200' },
-      { id: '2-2c', time: '11:45', title: '舊長谷川治郎兵衛家', location: '松阪市', type: 'sightseeing', description: '迴遊式庭園、大判小判展示' },
-      { id: '2-3', time: '12:15', title: '松坂城跡', location: '松阪市', type: 'sightseeing', description: '蒲生氏郷建造、壯觀石垣' },
-      { id: '2-3a', time: '12:45', title: '御城番屋敷', location: '松坂城跡旁', type: 'sightseeing', description: '紀州藩士房舍、重要文化財' },
-      { id: '2-4', time: '13:00', title: '一升瓶 本店', location: '松阪市南町', type: 'food', description: '松阪牛迴轉燒肉', businessHours: '11:00-21:30', notes: '必點牛排部位' },
-      { id: '2-4a', time: '14:30', title: '茶遊膳 茶重', location: '松阪市新町', type: 'food', description: '深蒸煎茶、日式空間' },
-      { id: '2-5', time: '15:30', title: '橫山展望台', location: '志摩市', type: 'sightseeing', description: '眺望英虞灣絕景、遊客中心' },
-      { id: '2-6', time: '16:30', title: '大王崎燈塔', location: '志摩半島東南端', type: 'sightseeing', description: '登塔參觀、八幡山公園眺望', notes: '看時間決定' },
-      { id: '2-7', time: '17:30', title: '入住：志摩觀光飯店', location: 'The Bay Suite', type: 'stay', price: '¥92,640' }
-    ]
-  },
-  {
-    id: 'day-3',
-    date: '2026-01-16',
-    dayNum: 3,
-    weekday: 'Fri',
-    weekdayZh: '週五',
-    mainLocation: '志摩市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-        { id: '3-0', time: '07:00', title: '飯店早餐', location: '志摩觀光飯店', type: 'food' },
-        { id: '3-1', time: '09:00', title: '飯店歷史導覽', location: '志摩觀光飯店', type: 'sightseeing', description: '約40分鐘' },
-        { id: '3-2', time: '11:15', title: '英虞灣遊船', location: 'Marine Cab', type: 'sightseeing', ticketPrice: '¥1,500', description: '約45分鐘' },
-        { id: '3-2a', time: '12:15', title: '海女文化資料館', location: '相差町', type: 'sightseeing', description: '免費入館、鮑魚採集體驗模型' },
-        { id: '3-2b', time: '12:45', title: '神明神社 (石神さん)', location: '相差町', type: 'sightseeing', description: '女性許願靈驗、Doman Seman圖騰' },
-        { id: '3-3', time: '13:15', title: '海女小屋 (八幡灶)', location: '相差町', type: 'food', description: '現烤海鮮 + 海女表演', price: '¥31,900' },
-        { id: '3-4', time: '15:00', title: '珍珠博物館', location: '御木本真珠島', type: 'sightseeing', description: '珍珠養殖歷史、飾品展示' },
-        { id: '3-5', time: '15:30', title: '海女表演', location: '御木本真珠島', type: 'sightseeing', description: '觀看最後一場表演' },
-        { id: '3-6', time: '17:00', title: '入住：鳥羽國際飯店', location: '潮路亭', type: 'stay', description: '兩晚住宿', price: '¥142,662' }
-    ]
-  },
-  {
-    id: 'day-4',
-    date: '2026-01-17',
-    dayNum: 4,
-    weekday: 'Sat',
-    weekdayZh: '週六',
-    mainLocation: '伊勢市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-        { id: '4-0', time: '07:00', title: '飯店早餐', location: '潮路亭', type: 'food' },
-        { id: '4-1', time: '10:00', title: '伊勢神宮 (外宮)', location: '豐受大神宮', type: 'sightseeing', notes: '左側通行、先祭外宮' },
-        { id: '4-1a', time: '10:45', title: '月夜見宮', location: '外宮步行5分', type: 'sightseeing', notes: '看時間可去可不去' },
-        { id: '4-2', time: '11:30', title: '伊勢神宮 (內宮)', location: '皇大神宮', type: 'sightseeing', notes: '右側通行、五十鈴川' },
-        { id: '4-3', time: '13:00', title: '托福橫丁', location: '伊勢神宮前', type: 'food', description: '赤福本店、伊勢烏龍麵(ふくすけ)、豚捨可樂餅' },
-        { id: '4-4', time: '14:30', title: '伊勢志摩天空道路', location: '朝熊山展望台', type: 'sightseeing', description: '天空郵筒、足湯' },
-        { id: '4-5', time: '15:30', title: '金剛證寺', location: '朝熊山', type: 'sightseeing', description: '守護伊勢神宮鬼門' },
-        { id: '4-6', time: '16:30', title: '夫婦岩', location: '二見興玉神社', type: 'sightseeing', description: '二見浦海岸' },
-        { id: '4-7', time: '18:00', title: '回飯店', location: '鳥羽國際飯店', type: 'stay' }
-    ]
-  },
-  {
-    id: 'day-5',
-    date: '2026-01-18',
-    dayNum: 5,
-    weekday: 'Sun',
-    weekdayZh: '週日',
-    mainLocation: '名古屋市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-        { id: '5-0', time: '07:00', title: '飯店早餐', location: '潮路亭', type: 'food' },
-        { id: '5-1', time: '09:00', title: '鳥羽水族館', location: '鳥羽市', type: 'sightseeing', description: '飼養種類日本第一', notes: '看時間可去可不去' },
-        { id: '5-2', time: '13:00', title: '豐田產業技術紀念館', location: '名古屋市西區', type: 'sightseeing', businessHours: '09:30-17:00', ticketPrice: '¥500' },
-        { id: '5-3', time: '17:00', title: 'Comfort Hotel', location: '名古屋金山', type: 'stay', description: '名鐵協商停車場(屋頂)', notes: '停車費¥1200/晚' },
-        { id: '5-4', time: '18:00', title: '市區漫步', location: '名古屋', type: 'other', description: '放完行李後外出' }
-    ]
-  },
-  {
-    id: 'day-6',
-    date: '2026-01-19',
-    dayNum: 6,
-    weekday: 'Mon',
-    weekdayZh: '週一',
-    mainLocation: '名古屋市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-        { id: '6-1', time: '09:00', title: '名古屋早餐', location: 'Komeda Coffee', type: 'food', description: '點飲料送吐司' },
-        { id: '6-2', time: '10:30', title: '名古屋城', location: '中區', type: 'sightseeing', description: '金鯱、本丸御殿', ticketPrice: '¥500' },
-        { id: '6-2a', time: '12:30', title: '大須觀音寺', location: '大須', type: 'sightseeing', description: '聖觀音菩薩、紅燈籠' },
-        { id: '6-3', time: '13:00', title: '大須商店街', location: '大須', type: 'shopping', description: '購物天堂' },
-        { id: '6-4', time: '15:30', title: '熱田神宮', location: '熱田區', type: 'sightseeing', description: '三神器草薙劍、心靈之鄉' }
-    ]
-  },
-  {
-    id: 'day-7',
-    date: '2026-01-20',
-    dayNum: 7,
-    weekday: 'Tue',
-    weekdayZh: '週二',
-    mainLocation: '常滑市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-        { id: '7-1', time: '10:30', title: '角久八丁味噌', location: '岡崎市', type: 'sightseeing' },
-        { id: '7-2', time: '13:00', title: '西條園抹茶博物館', location: '西尾市', type: 'sightseeing', notes: '已預約體驗導覽' },
-        { id: '7-3', time: '15:00', title: '常滑市陶瓷器會館', location: '常滑市', type: 'sightseeing', description: '散步道起點、招財貓' },
-        { id: '7-3a', time: '15:30', title: '守護貓Tokonyan', location: '常滑市', type: 'sightseeing', description: '巨型招財貓、拍照點' },
-        { id: '7-3b', time: '16:00', title: '土管坂', location: '常滑市', type: 'sightseeing', description: '地面鋪滿燒酒瓶與土管' },
-        { id: '7-3c', time: '16:30', title: '登窯 & 菁陶園', location: '常滑市', type: 'sightseeing' },
-        { id: '7-4', time: '17:30', title: 'Aeon Mall 常滑', location: '常滑', type: 'shopping', description: '晚餐、購物' },
-        { id: '7-5', time: '20:00', title: '歸還租車', location: '中部國際機場', type: 'transport' },
-        { id: '7-6', time: '21:00', title: '入住飯店', location: 'Comfort Hotel Central Int\'l Airport', type: 'stay', price: '¥2,752 (Points)' }
-    ]
-  },
-  {
-    id: 'day-8',
-    date: '2026-01-21',
-    dayNum: 8,
-    weekday: 'Wed',
-    weekdayZh: '週三',
-    mainLocation: '常滑市',
-    hourlyWeather: MOCK_HOURLY_WEATHER,
-    events: [
-        { id: '8-1', time: '10:00', title: '機場報到', location: '中部國際 T1', type: 'flight', description: '托運行李' },
-        { id: '8-1a', time: '11:00', title: 'Flight of Dreams', location: 'T2 航廈', type: 'sightseeing', description: '波音787展示、蝦仙貝之里' },
-        { id: '8-2', time: '12:05', title: 'JL8671 返回台北', location: '抵達 14:40', type: 'flight' }
-    ]
-  }
-];
-
-const INITIAL_BOOKINGS: BookingItem[] = [
-    {
-        id: 'b-1',
-        type: 'flight',
-        dateRange: '1/14',
-        flightNumber: 'JL8670',
-        deptCode: 'TPE', deptTime: '15:50', deptTerminal: '桃園 T2',
-        arrCode: 'NGO', arrTime: '19:25', arrTerminal: '中部 T1',
-        airline: 'JAPAN AIRLINES'
-    },
-    {
-        id: 'b-2',
-        type: 'flight',
-        dateRange: '1/21',
-        flightNumber: 'JL8671',
-        deptCode: 'NGO', deptTime: '12:05', deptTerminal: '中部 T1',
-        arrCode: 'TPE', arrTime: '14:40', arrTerminal: '桃園 T2',
-        airline: 'JAPAN AIRLINES'
-    },
-    {
-        id: 'b-3',
-        type: 'hotel',
-        dateRange: '1/14 - 15',
-        hotelName: 'Hotel Castle Inn Tsu',
-        platform: 'Booking.com',
-        roomDetail: '含早餐・兩間客房',
-        price: '¥15,496'
-    },
-    {
-        id: 'b-4',
-        type: 'hotel',
-        dateRange: '1/15 - 16',
-        hotelName: 'Shima Kanko Hotel The Bay Suite',
-        platform: '一休.com',
-        roomDetail: '含早餐・4名1室',
-        price: '¥92,640'
-    },
-    {
-        id: 'b-5',
-        type: 'hotel',
-        dateRange: '1/16 - 18',
-        hotelName: 'Toba International Hotel Shiojitei',
-        platform: '一休.com',
-        roomDetail: '含早餐・2名2室',
-        price: '¥142,662'
-    },
-    {
-        id: 'b-6',
-        type: 'hotel',
-        dateRange: '1/18 - 20',
-        hotelName: 'Comfort Hotel Nagoya Kanayama',
-        platform: 'Points',
-        roomDetail: '32,000 pts',
-        price: 'TWD 5,504'
-    },
-    {
-        id: 'b-7',
-        type: 'hotel',
-        dateRange: '1/20 - 21',
-        hotelName: 'Comfort Hotel Central Int\'l Airport',
-        platform: 'Points',
-        roomDetail: '16,000 pts',
-        price: 'TWD 2,752'
-    },
-    {
-        id: 'b-8',
-        type: 'rental',
-        company: '日産レンタカー',
-        pickUpLoc: '中部國際機場店',
-        pickUpTime: '1/14 20:00',
-        dropOffLoc: '中部國際機場店',
-        dropOffTime: '1/20 20:00',
-        carModel: 'Serena e-POWER',
-        price: '¥88,902'
-    }
-];
-
-const INITIAL_MUST_LIST: MustItem[] = [
-    // Nagoya - Eat
-    { id: 'm-1', type: 'eat', area: '名古屋', name: '矢場味噌豬排', location: '名鐵百貨店本館 9F', note: '名鐵百貨店、榮店', isCompleted: false },
-    { id: 'm-2', type: 'eat', area: '名古屋', name: '熱田蓬萊軒 鰻魚飯', location: '熱田神宮旁', note: '熱田神宮旁，需排隊', isCompleted: false },
-    { id: 'm-3', type: 'eat', area: '名古屋', name: '世界之山將手羽先', location: '名古屋市中區榮4-16-24', note: '夢幻雞翅', isCompleted: false },
-    { id: 'm-4', type: 'eat', area: '名古屋', name: 'HARBS 水果千層', location: '名古屋市中区錦3-6-17', note: '榮本店', isCompleted: false },
-    { id: 'm-4a', type: 'eat', area: '名古屋', name: 'Konparu 炸蝦三明治', location: '大須商店街', note: '老牌喫茶店', isCompleted: false },
-    // Nagoya - Buy
-    { id: 'm-5', type: 'buy', area: '名古屋', name: '青柳總本家 青蛙饅頭', location: '大須商店街', note: '可愛伴手禮', isCompleted: false },
-    { id: 'm-6', type: 'buy', area: '常滑', name: '蝦仙貝之里', location: '中部國際機場 4F', note: '中部機場/常滑可買', isCompleted: false },
-    { id: 'm-6a', type: 'buy', area: '常滑', name: '常滑燒招財貓', location: '常滑市陶瓷器會館', note: '陶瓷器散步道', isCompleted: false },
-    
-    // Ise/Toba/Shima - Eat
-    { id: 'm-7', type: 'eat', area: '伊勢', name: '赤福餅', location: '伊勢神宮 内宮前', note: '內宮前本店，紅豆麻糬', isCompleted: false },
-    { id: 'm-8', type: 'eat', area: '伊勢', name: '伊勢烏龍麵', location: 'Fukusuke (ふくすけ)', note: '托福橫丁內', isCompleted: false },
-    { id: 'm-9', type: 'eat', area: '伊勢', name: '豚捨 可樂餅', location: '托福橫丁內', note: '必吃小吃', isCompleted: false },
-    { id: 'm-10', type: 'eat', area: '松阪', name: '一升瓶 松阪牛燒肉', location: '松阪市南町232-3', note: '迴轉燒肉', isCompleted: false },
-    { id: 'm-11', type: 'eat', area: '鳥羽', name: '海女小屋 現烤海鮮', location: '鳥羽市相差町819', note: 'Hachiman Kamado', isCompleted: false },
-    // Ise/Toba/Shima - Buy
-    { id: 'm-12', type: 'buy', area: '伊勢', name: '伊勢木棉', location: '伊勢神宮 外宮參道', note: '口金包、手帕', isCompleted: false },
-    { id: 'm-13', type: 'buy', area: '鳥羽', name: '御木本真珠', location: '御木本真珠島', note: '珍珠飾品', isCompleted: false },
-];
-
-// --- 5. Helpers ---
-const parsePrice = (priceStr?: string): { amount: number, currency: CurrencyType } | null => {
-    if (!priceStr) return null;
-    
-    if (priceStr.includes('TWD') || priceStr.includes('NT$')) {
-        const num = parseFloat(priceStr.replace(/[^0-9.]/g, ''));
-        return { amount: isNaN(num) ? 0 : num, currency: 'TWD' };
-    }
-    
-    const num = parseFloat(priceStr.replace(/[^0-9.]/g, ''));
-    return { amount: isNaN(num) ? 0 : num, currency: 'JPY' };
-};
-
-const generateInitialExpenses = (): ExpenseItem[] => {
-    return INITIAL_BOOKINGS.map(booking => {
-        const priceData = parsePrice(booking.price);
-        if (!priceData || priceData.amount === 0) return null;
-
-        let title = '';
-        let category: EventType = 'other';
-        let date = '2026-01-14'; 
-        let paymentMethod: PaymentMethodType = 'card';
-
-        if (booking.pickUpTime) {
-           const match = booking.pickUpTime.match(/(\d{1,2})\/(\d{1,2})/);
-           if (match) date = `2026-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`;
-           category = 'transport';
-           title = `${booking.company} 租車`;
-        } else if (booking.dateRange) {
-           const match = booking.dateRange.match(/(\d{1,2})\/(\d{1,2})/);
-           if (match) date = `2026-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`;
-           
-           if (booking.type === 'hotel') {
-               category = 'stay';
-               title = booking.hotelName || '住宿費';
-           } else if (booking.type === 'flight') {
-               category = 'flight';
-               title = `${booking.airline} ${booking.flightNumber}`;
-           }
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        ise: {
+                            base: '#F4F6F8', // 極簡灰白底
+                            blue: '#1e3a5f', // 伊勢深藍
+                            accent: '#A59ACA', // 藤花紫點綴
+                            gold: '#C5A059', // 參拜金
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['"Noto Sans TC"', 'sans-serif'],
+                    }
+                }
+            }
         }
-
-        return {
-            id: `exp-${booking.id}`,
-            date,
-            title,
-            amount: priceData.amount,
-            currency: priceData.currency,
-            category,
-            paymentMethod
-        };
-    }).filter((item): item is ExpenseItem => item !== null);
-};
-
-// --- 6. UI Components ---
-
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'accent' | 'outline' | 'ghost' | 'danger';
-  size?: 'sm' | 'md' | 'lg' | 'icon';
-}
-
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', ...props }, ref) => {
-    const variants = {
-      primary: 'bg-[#88B04B] text-white border-2 border-[#88B04B] shadow-soft hover:translate-y-[1px] hover:shadow-soft-hover',
-      accent: 'bg-[#FF8C42] text-white border-2 border-[#FF8C42] shadow-soft hover:translate-y-[1px] hover:shadow-soft-hover',
-      outline: 'bg-white text-[#4A4A4A] border-2 border-[#E0E5D5] shadow-soft hover:translate-y-[1px] hover:shadow-soft-hover',
-      ghost: 'bg-transparent text-[#4A4A4A] hover:bg-[#E0E5D5]/30',
-      danger: 'bg-red-50 text-red-500 border-2 border-red-100 hover:bg-red-100',
-    };
-
-    const sizes = {
-      sm: 'h-8 px-3 text-sm rounded-lg',
-      md: 'h-11 px-5 text-base rounded-xl',
-      lg: 'h-14 px-8 text-lg rounded-2xl',
-      icon: 'h-11 w-11 p-0 flex items-center justify-center rounded-xl',
-    };
-
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          'font-bold transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2',
-          variants[variant],
-          sizes[size],
-          className
-        )}
-        {...props}
-      />
-    );
-  }
-);
-Button.displayName = "Button";
-
-interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
-  noPadding?: boolean;
-}
-
-const Card = React.forwardRef<HTMLDivElement, CardProps>(
-  ({ className, noPadding = false, children, ...props }, ref) => {
-    return (
-      <div
-        ref={ref}
-        className={cn(
-          'bg-white rounded-[20px] border-2 border-[#E0E5D5] shadow-soft',
-          noPadding ? 'p-0' : 'p-5',
-          className
-        )}
-        {...props}
-      >
-        {children}
-      </div>
-    );
-  }
-);
-Card.displayName = "Card";
-
-const BottomNav = ({ activeTab, onTabChange }: { activeTab: string, onTabChange: (id: string) => void }) => {
-  const navItems = [
-    { id: 'schedule', icon: Calendar, label: '行程' },
-    { id: 'bookings', icon: Ticket, label: '預訂' },
-    { id: 'expense', icon: Wallet, label: '記帳' },
-    { id: 'plan', icon: ShoppingBag, label: '必買必吃' }, 
-  ];
-
-  return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 pb-safe pointer-events-none w-full md:max-w-md md:mx-auto">
-      <div className="absolute inset-0 bg-[#F7F4EB]/90 backdrop-blur-md border-t-2 border-[#E0E5D5] pointer-events-auto" />
-      <div className="relative flex justify-around items-end h-[80px] pb-4 px-2 pointer-events-auto">
-        {navItems.map((item) => {
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onTabChange(item.id)}
-              className={cn(
-                "flex flex-col items-center justify-center w-16 gap-1 transition-all duration-300",
-                isActive ? "text-[#88B04B] -translate-y-1" : "text-[#8D6E63] opacity-60 hover:opacity-100"
-              )}
-            >
-              <item.icon 
-                size={isActive ? 26 : 24} 
-                strokeWidth={isActive ? 2.5 : 2}
-                className={cn("transition-all", isActive && "fill-[#88B04B]/10")}
-              />
-              <span className="text-[10px] font-bold tracking-wide">{item.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-};
-
-const Layout = ({ children, activeTab, onTabChange }: { children: React.ReactNode, activeTab: string, onTabChange: (id: string) => void }) => {
-  return (
-    <div className="app-container w-full md:max-w-md mx-auto relative flex flex-col shadow-2xl overflow-hidden border-x border-[#E0E5D5]">
-      <GlobalStyles />
-      <header className="sticky top-0 z-40 bg-[#F7F4EB]/90 backdrop-blur-sm px-5 py-4 flex justify-between items-center shadow-sm">
-        <div className="flex flex-col">
-          <span className="text-xs font-bold text-[#88B04B] tracking-wider uppercase">Japan Trip 2026</span>
-          <h1 className="text-xl font-extrabold text-[#4A4A4A]">名古屋・伊勢之旅 🏯</h1>
-        </div>
-      </header>
-      <main className="flex-1 px-5 pb-32 pt-2 space-y-6 overflow-y-auto scrollbar-hide">
-        {children}
-      </main>
-      <BottomNav activeTab={activeTab} onTabChange={onTabChange} />
-    </div>
-  );
-};
-
-// --- 7. Modals ---
-
-const TripModal = ({ 
-    isOpen, 
-    onClose, 
-    onSave, 
-    onDelete,
-    initialData 
-}: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    onSave: (data: Partial<TripEvent>) => void;
-    onDelete?: () => void;
-    initialData?: TripEvent; 
-}) => {
-    if (!isOpen) return null;
-
-    const [formData, setFormData] = useState<Partial<TripEvent>>({});
-    const [isDeleting, setIsDeleting] = useState(false);
-
-    useEffect(() => {
-        setFormData({
-            title: '',
-            time: '10:00',
-            type: 'sightseeing',
-            location: '',
-            businessHours: '',
-            ticketPrice: '',
-            notes: '',
-            description: '',
-            ...initialData
-        });
-        setIsDeleting(false);
-    }, [initialData, isOpen]);
-
-    const handleDelete = () => {
-        if (isDeleting) {
-            if (onDelete) onDelete();
-        } else {
-            setIsDeleting(true);
-            setTimeout(() => setIsDeleting(false), 3000);
+    </script>
+    <style>
+        body {
+            background-color: #F0F2F5;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Noto Sans TC', sans-serif;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
         }
-    };
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-            <Card className="w-full max-w-sm relative z-10 animate-bounce-slight" noPadding>
-                <div className="p-4 border-b border-[#E0E5D5] flex justify-between items-center bg-[#F7F4EB] rounded-t-[20px]">
-                    <h3 className="font-bold text-lg text-[#4A4A4A]">
-                        {initialData ? '編輯行程' : '新增行程'}
-                    </h3>
-                    <button onClick={onClose} className="p-1 hover:bg-[#E0E5D5] rounded-full">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">名稱</label>
-                        <input 
-                            className="input-journal"
-                            value={formData.title || ''}
-                            onChange={e => setFormData({...formData, title: e.target.value})}
-                            placeholder="例如：名古屋城"
-                        />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">時間</label>
-                            <input 
-                                type="time"
-                                className="input-journal"
-                                value={formData.time || ''}
-                                onChange={e => setFormData({...formData, time: e.target.value})}
-                            />
-                        </div>
-                         <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">分類</label>
-                            <select 
-                                className="input-journal bg-white"
-                                value={formData.type || 'sightseeing'}
-                                onChange={e => setFormData({...formData, type: e.target.value as EventType})}
-                            >
-                                {EVENT_TYPES.map(t => (
-                                    <option key={t.value} value={t.value}>{t.label}</option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">地點</label>
-                        <input 
-                            className="input-journal"
-                            value={formData.location || ''}
-                            onChange={e => setFormData({...formData, location: e.target.value})}
-                            placeholder="輸入地點..."
-                        />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">營業時間</label>
-                            <input 
-                                className="input-journal"
-                                value={formData.businessHours || ''}
-                                onChange={e => setFormData({...formData, businessHours: e.target.value})}
-                            />
-                        </div>
-                         <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">門票/預算</label>
-                            <input 
-                                className="input-journal"
-                                value={formData.ticketPrice || ''}
-                                onChange={e => setFormData({...formData, ticketPrice: e.target.value})}
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">備註 (黃框內容)</label>
-                        <textarea 
-                            className="input-journal h-20"
-                            value={formData.description || ''}
-                            onChange={e => setFormData({...formData, description: e.target.value})}
-                            placeholder="顯示在卡片下方的詳細說明..."
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">特色 & 筆記</label>
-                        <textarea 
-                            className="input-journal h-20"
-                            value={formData.notes || ''}
-                            onChange={e => setFormData({...formData, notes: e.target.value})}
-                            placeholder="私人筆記、注意事項..."
-                        />
-                    </div>
-                </div>
-
-                <div className="p-4 border-t border-[#E0E5D5] flex gap-3 bg-[#F7F4EB] rounded-b-[20px]">
-                    {initialData && (
-                        <Button 
-                            variant={isDeleting ? "danger" : "outline"} 
-                            className={cn("flex-1 transition-all", isDeleting && "bg-red-500 text-white border-red-500")}
-                            onClick={handleDelete}
-                        >
-                            {isDeleting ? "確定刪除?" : <><Trash2 size={16} /> 刪除</>}
-                        </Button>
-                    )}
-                    <Button className="flex-[2]" onClick={() => onSave(formData)}>
-                        儲存
-                    </Button>
-                </div>
-            </Card>
-        </div>
-    );
-};
-
-const BookingModal = ({ 
-    isOpen, 
-    onClose, 
-    onSave, 
-    onDelete,
-    initialData 
-}: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    onSave: (data: Partial<BookingItem>) => void;
-    onDelete?: () => void;
-    initialData?: BookingItem; 
-}) => {
-    if (!isOpen) return null;
-
-    const [formData, setFormData] = useState<Partial<BookingItem>>({});
-    const [bookingType, setBookingType] = useState<BookingType>(initialData?.type || 'hotel');
-    const [isDeleting, setIsDeleting] = useState(false);
-
-    useEffect(() => {
-        setFormData({ ...initialData });
-        setBookingType(initialData?.type || 'hotel');
-        setIsDeleting(false);
-    }, [initialData, isOpen]);
-
-    const handleDelete = () => {
-        if (isDeleting) {
-            if (onDelete) onDelete();
-        } else {
-            setIsDeleting(true);
-            setTimeout(() => setIsDeleting(false), 3000);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-            <Card className="w-full max-w-sm relative z-10 animate-bounce-slight" noPadding>
-                <div className="p-4 border-b border-[#E0E5D5] flex justify-between items-center bg-[#F7F4EB] rounded-t-[20px]">
-                    <h3 className="font-bold text-lg text-[#4A4A4A]">
-                        {initialData ? '編輯預訂' : '新增預訂'}
-                    </h3>
-                    <button onClick={onClose} className="p-1 hover:bg-[#E0E5D5] rounded-full">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
-                    {!initialData && (
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">類型</label>
-                            <div className="flex gap-2">
-                                {BOOKING_TYPES.map(t => (
-                                    <button
-                                        key={t.value}
-                                        onClick={() => { setBookingType(t.value); setFormData({...formData, type: t.value}); }}
-                                        className={cn(
-                                            "flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all",
-                                            bookingType === t.value 
-                                                ? "border-[#88B04B] bg-[#88B04B]/10 text-[#88B04B]" 
-                                                : "border-[#E0E5D5] bg-white text-gray-400"
-                                        )}
-                                    >
-                                        {t.label}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {bookingType !== 'rental' && (
-                         <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">日期 / 區間</label>
-                            <input 
-                                className="input-journal"
-                                value={formData.dateRange || ''}
-                                onChange={e => setFormData({...formData, dateRange: e.target.value})}
-                                placeholder="例如: 1/14 - 15"
-                            />
-                        </div>
-                    )}
-                    
-                    {bookingType === 'flight' && (
-                        <>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">航班代號</label>
-                                    <input className="input-journal" value={formData.flightNumber || ''} onChange={e => setFormData({...formData, flightNumber: e.target.value})} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">航空公司</label>
-                                    <input className="input-journal" value={formData.airline || ''} onChange={e => setFormData({...formData, airline: e.target.value})} />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">起飛 (代碼/時間)</label>
-                                    <input className="input-journal mb-2" value={formData.deptCode || ''} onChange={e => setFormData({...formData, deptCode: e.target.value})} placeholder="TPE"/>
-                                    <input type="time" className="input-journal" value={formData.deptTime || ''} onChange={e => setFormData({...formData, deptTime: e.target.value})} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">抵達 (代碼/時間)</label>
-                                    <input className="input-journal mb-2" value={formData.arrCode || ''} onChange={e => setFormData({...formData, arrCode: e.target.value})} placeholder="NGO"/>
-                                    <input type="time" className="input-journal" value={formData.arrTime || ''} onChange={e => setFormData({...formData, arrTime: e.target.value})} />
-                                </div>
-                            </div>
-                        </>
-                    )}
-                    {bookingType === 'hotel' && (
-                         <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">飯店名稱</label>
-                            <input className="input-journal" value={formData.hotelName || ''} onChange={e => setFormData({...formData, hotelName: e.target.value})} />
-                        </div>
-                    )}
-                    {bookingType === 'rental' && (
-                         <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">租車公司</label>
-                            <input className="input-journal" value={formData.company || ''} onChange={e => setFormData({...formData, company: e.target.value})} />
-                        </div>
-                    )}
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">價格</label>
-                        <input className="input-journal" value={formData.price || ''} onChange={e => setFormData({...formData, price: e.target.value})} />
-                    </div>
-                </div>
-
-                <div className="p-4 border-t border-[#E0E5D5] flex gap-3 bg-[#F7F4EB] rounded-b-[20px]">
-                    {initialData && (
-                        <Button 
-                            variant={isDeleting ? "danger" : "outline"} 
-                            className={cn("flex-1 transition-all", isDeleting && "bg-red-500 text-white border-red-500")}
-                            onClick={handleDelete}
-                        >
-                            {isDeleting ? "確定刪除?" : <><Trash2 size={16} /> 刪除</>}
-                        </Button>
-                    )}
-                    <Button className="flex-[2]" onClick={() => onSave(formData)}>
-                        儲存
-                    </Button>
-                </div>
-            </Card>
-        </div>
-    );
-}
-
-const ExpenseModal = ({ 
-    isOpen, 
-    onClose, 
-    onSave, 
-    onDelete,
-    initialData 
-}: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    onSave: (data: Partial<ExpenseItem>) => void;
-    onDelete?: () => void;
-    initialData?: ExpenseItem; 
-}) => {
-    if (!isOpen) return null;
-
-    const [formData, setFormData] = useState<Partial<ExpenseItem>>({
-        date: '2026-01-14',
-        currency: 'JPY',
-        category: 'food',
-        paymentMethod: 'cash'
-    });
-    const [isDeleting, setIsDeleting] = useState(false);
-
-    useEffect(() => {
-        setFormData({ 
-            date: '2026-01-14',
-            currency: 'JPY',
-            category: 'food',
-            paymentMethod: 'cash',
-            ...initialData 
-        });
-        setIsDeleting(false);
-    }, [initialData, isOpen]);
-
-    const handleDelete = () => {
-        if (isDeleting) {
-            if (onDelete) onDelete();
-        } else {
-            setIsDeleting(true);
-            setTimeout(() => setIsDeleting(false), 3000);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-            <Card className="w-full max-w-sm relative z-10 animate-bounce-slight" noPadding>
-                <div className="p-4 border-b border-[#E0E5D5] flex justify-between items-center bg-[#F7F4EB] rounded-t-[20px]">
-                    <h3 className="font-bold text-lg text-[#4A4A4A]">
-                        {initialData ? '編輯支出' : '新增支出'}
-                    </h3>
-                    <button onClick={onClose} className="p-1 hover:bg-[#E0E5D5] rounded-full">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="p-5 space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">日期</label>
-                        <input 
-                            type="date"
-                            className="input-journal"
-                            value={formData.date || ''}
-                            onChange={e => setFormData({...formData, date: e.target.value})}
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">項目名稱</label>
-                        <input 
-                            className="input-journal"
-                            value={formData.title || ''}
-                            onChange={e => setFormData({...formData, title: e.target.value})}
-                            placeholder="例如：午餐"
-                        />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                         <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">金額</label>
-                            <input 
-                                type="number"
-                                className="input-journal"
-                                value={formData.amount || 0}
-                                onChange={e => setFormData({...formData, amount: parseFloat(e.target.value)})}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">幣別</label>
-                            <div className="flex bg-white rounded-xl border-2 border-[#E0E5D5] overflow-hidden">
-                                <button 
-                                    onClick={() => setFormData({...formData, currency: 'JPY'})}
-                                    className={cn("flex-1 py-2 text-xs font-bold", formData.currency === 'JPY' ? 'bg-[#88B04B] text-white' : 'text-gray-400')}
-                                >
-                                    JPY
-                                </button>
-                                <button 
-                                    onClick={() => setFormData({...formData, currency: 'TWD'})}
-                                    className={cn("flex-1 py-2 text-xs font-bold", formData.currency === 'TWD' ? 'bg-[#FF8C42] text-white' : 'text-gray-400')}
-                                >
-                                    TWD
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">分類</label>
-                        <select 
-                            className="input-journal bg-white"
-                            value={formData.category || 'food'}
-                            onChange={e => setFormData({...formData, category: e.target.value as EventType})}
-                        >
-                            {EVENT_TYPES.map(t => (
-                                <option key={t.value} value={t.value}>{t.label}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                     <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">付款方式</label>
-                        <div className="grid grid-cols-3 gap-2">
-                             {PAYMENT_METHODS.map(m => (
-                                <button 
-                                    key={m.value}
-                                    onClick={() => setFormData({...formData, paymentMethod: m.value})}
-                                    className={cn(
-                                        "py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 border-2 transition-all", 
-                                        formData.paymentMethod === m.value 
-                                            ? "border-[#88B04B] bg-[#88B04B]/10 text-[#88B04B]" 
-                                            : "border-[#E0E5D5] bg-white text-gray-400"
-                                    )}
-                                >
-                                    <m.icon size={16} />
-                                    {m.label}
-                                </button>
-                             ))}
-                        </div>
-                    </div>
-                </div>
-
-                <div className="p-4 border-t border-[#E0E5D5] flex gap-3 bg-[#F7F4EB] rounded-b-[20px]">
-                    {initialData && (
-                        <Button 
-                            variant={isDeleting ? "danger" : "outline"} 
-                            className={cn("flex-1 transition-all", isDeleting && "bg-red-500 text-white border-red-500")}
-                            onClick={handleDelete}
-                        >
-                            {isDeleting ? "確定刪除?" : <><Trash2 size={16} /> 刪除</>}
-                        </Button>
-                    )}
-                    <Button className="flex-[2]" onClick={() => onSave(formData)}>
-                        儲存
-                    </Button>
-                </div>
-            </Card>
-        </div>
-    );
-};
-
-const MustModal = ({ 
-    isOpen, 
-    onClose, 
-    onSave, 
-    onDelete,
-    initialData 
-}: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    onSave: (data: Partial<MustItem>) => void;
-    onDelete?: () => void;
-    initialData?: MustItem; 
-}) => {
-    if (!isOpen) return null;
-
-    const [formData, setFormData] = useState<Partial<MustItem>>({
-        type: 'eat',
-        area: '名古屋',
-        isCompleted: false
-    });
-    const [isDeleting, setIsDeleting] = useState(false);
-
-    useEffect(() => {
-        setFormData({
-            type: 'eat',
-            area: '名古屋',
-            isCompleted: false,
-            ...initialData
-        });
-        setIsDeleting(false);
-    }, [initialData, isOpen]);
-
-    const handleDelete = () => {
-        if (isDeleting) {
-            if (onDelete) onDelete();
-        } else {
-            setIsDeleting(true);
-            setTimeout(() => setIsDeleting(false), 3000);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-            <Card className="w-full max-w-sm relative z-10 animate-bounce-slight" noPadding>
-                <div className="p-4 border-b border-[#E0E5D5] flex justify-between items-center bg-[#F7F4EB] rounded-t-[20px]">
-                    <h3 className="font-bold text-lg text-[#4A4A4A]">
-                        {initialData ? '編輯項目' : '新增必吃/必買'}
-                    </h3>
-                    <button onClick={onClose} className="p-1 hover:bg-[#E0E5D5] rounded-full">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="p-5 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">類型</label>
-                            <div className="flex bg-white rounded-xl border-2 border-[#E0E5D5] overflow-hidden">
-                                <button 
-                                    onClick={() => setFormData({...formData, type: 'eat'})}
-                                    className={cn("flex-1 py-2 text-xs font-bold flex items-center justify-center gap-1", formData.type === 'eat' ? 'bg-[#FF8C42] text-white' : 'text-gray-400')}
-                                >
-                                    <Utensils size={12} /> 美食
-                                </button>
-                                <button 
-                                    onClick={() => setFormData({...formData, type: 'buy'})}
-                                    className={cn("flex-1 py-2 text-xs font-bold flex items-center justify-center gap-1", formData.type === 'buy' ? 'bg-[#88B04B] text-white' : 'text-gray-400')}
-                                >
-                                    <Gift size={12} /> 購物
-                                </button>
-                            </div>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">地區</label>
-                            <select 
-                                className="input-journal bg-white"
-                                value={formData.area || '名古屋'}
-                                onChange={e => setFormData({...formData, area: e.target.value})}
-                            >
-                                {MUST_AREAS.map(area => (
-                                    <option key={area} value={area}>{area}</option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">名稱</label>
-                        <input 
-                            className="input-journal"
-                            value={formData.name || ''}
-                            onChange={e => setFormData({...formData, name: e.target.value})}
-                            placeholder="例如：赤福"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">地址 (導航用)</label>
-                        <input 
-                            className="input-journal"
-                            value={formData.location || ''}
-                            onChange={e => setFormData({...formData, location: e.target.value})}
-                            placeholder="輸入地址或關鍵字"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">備註</label>
-                        <textarea 
-                            className="input-journal h-20"
-                            value={formData.note || ''}
-                            onChange={e => setFormData({...formData, note: e.target.value})}
-                            placeholder="必點品項、位置..."
-                        />
-                    </div>
-                </div>
-
-                <div className="p-4 border-t border-[#E0E5D5] flex gap-3 bg-[#F7F4EB] rounded-b-[20px]">
-                    {initialData && (
-                        <Button 
-                            variant={isDeleting ? "danger" : "outline"} 
-                            className={cn("flex-1 transition-all", isDeleting && "bg-red-500 text-white border-red-500")}
-                            onClick={handleDelete}
-                        >
-                            {isDeleting ? "確定刪除?" : <><Trash2 size={16} /> 刪除</>}
-                        </Button>
-                    )}
-                    <Button className="flex-[2]" onClick={() => onSave(formData)}>
-                        儲存
-                    </Button>
-                </div>
-            </Card>
-        </div>
-    );
-};
-
-// --- 8. Feature Components ---
-
-const FlightCard = ({ item, onClick }: { item: BookingItem, onClick: () => void }) => (
-    <Card className="mb-4 relative overflow-hidden cursor-pointer hover:scale-[1.01] transition-transform" noPadding onClick={onClick}>
-        <div className="bg-[#0EA5E9] p-3 flex justify-between items-center text-white">
-            <div className="flex items-center gap-2">
-                <Plane size={18} className="rotate-45" />
-                <span className="font-bold text-sm tracking-widest">{item.airline || 'AIRLINE'}</span>
-            </div>
-            <span className="font-mono font-bold">{item.dateRange}</span>
-        </div>
-        <div className="p-5 flex justify-between items-center relative">
-             <div className="flex flex-col items-start">
-                 <span className="text-3xl font-black text-[#4A4A4A]">{item.deptCode}</span>
-                 <span className="text-lg font-bold text-[#0EA5E9]">{item.deptTime}</span>
-             </div>
-             <div className="flex flex-col items-center justify-center gap-1 w-1/3">
-                 <span className="text-xs font-bold text-gray-300 tracking-wider">{item.flightNumber}</span>
-                 <div className="w-full h-[2px] bg-gray-200 relative">
-                     <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-gray-300 rounded-full" />
-                     <Plane size={14} className="text-[#0EA5E9] absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 bg-white" />
-                 </div>
-                 <span className="text-[10px] text-gray-400">Direct</span>
-             </div>
-             <div className="flex flex-col items-end">
-                 <span className="text-3xl font-black text-[#4A4A4A]">{item.arrCode}</span>
-                 <span className="text-lg font-bold text-[#0EA5E9]">{item.arrTime}</span>
-             </div>
-             <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Edit3 size={16} className="text-gray-400" />
-             </div>
-        </div>
-    </Card>
-);
-
-const HotelCard = ({ item, onClick }: { item: BookingItem, onClick: () => void }) => (
-    <Card className="mb-4 flex flex-col gap-3 group cursor-pointer hover:scale-[1.01] transition-transform" onClick={onClick}>
-        <div className="flex justify-between items-start">
-            <div className="flex gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#8B5CF6]/10 flex items-center justify-center text-[#8B5CF6]">
-                    <BedDouble size={20} />
-                </div>
-                <div>
-                    <div className="flex items-center gap-2 text-xs font-bold text-gray-400 mb-0.5">
-                        <CalendarDays size={12} /> {item.dateRange}
-                    </div>
-                    <h4 className="font-bold text-[#4A4A4A] leading-tight">{item.hotelName}</h4>
-                </div>
-            </div>
-        </div>
-        <div className="pl-[52px] space-y-2">
-            <div className="text-xs text-gray-500 bg-[#F7F4EB] p-2 rounded-lg border border-[#E0E5D5]/50 flex items-center gap-2">
-                <Info size={12} className="text-[#8B5CF6]" /> {item.roomDetail}
-            </div>
-            <div className="flex justify-end items-center gap-1">
-                <span className="text-xs font-bold text-gray-300">Total</span>
-                <span className="text-lg font-black text-[#4A4A4A]">{item.price}</span>
-            </div>
-        </div>
-    </Card>
-);
-
-const RentalCard = ({ item, onClick }: { item: BookingItem, onClick: () => void }) => (
-    <Card className="mb-4 bg-gradient-to-r from-orange-50 to-white border-orange-100 cursor-pointer hover:scale-[1.01] transition-transform" onClick={onClick}>
-        <div className="flex justify-between items-start mb-3">
-            <div className="flex gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#FF8C42]/10 flex items-center justify-center text-[#FF8C42]">
-                    <Car size={20} />
-                </div>
-                <div>
-                    <h4 className="font-bold text-[#4A4A4A]">{item.company}</h4>
-                    <span className="text-xs text-gray-400 font-bold">{item.pickUpLoc}</span>
-                </div>
-            </div>
-        </div>
-        <div className="flex items-center gap-4 text-xs font-bold text-gray-500 mb-3 bg-white/60 p-2 rounded-lg">
-            <div className="flex flex-col">
-                <span className="text-[10px] text-gray-300">PICK-UP</span>
-                <span>{item.pickUpTime}</span>
-            </div>
-            <ArrowRight size={14} className="text-gray-300" />
-             <div className="flex flex-col">
-                <span className="text-[10px] text-gray-300">DROP-OFF</span>
-                <span>{item.dropOffTime}</span>
-            </div>
-        </div>
-        <div className="flex justify-between items-center border-t border-orange-100 pt-2">
-            <span className="text-xs text-gray-400 font-bold">{item.carModel}</span>
-            <span className="text-lg font-black text-[#FF8C42]">{item.price}</span>
-        </div>
-    </Card>
-);
-
-// --- 9. Page Components ---
-
-const BookingsPage = ({ 
-    bookings, 
-    onEdit 
-}: { 
-    bookings: BookingItem[], 
-    onEdit: (item: BookingItem) => void 
-}) => {
-    const flights = bookings.filter(b => b.type === 'flight');
-    const hotels = bookings.filter(b => b.type === 'hotel');
-    const rentals = bookings.filter(b => b.type === 'rental');
-
-    return (
-        <div className="pb-24 space-y-6">
-            {flights.length > 0 && (
-                <section>
-                    <h3 className="text-sm font-bold text-[#8D6E63] mb-3 ml-1 flex items-center gap-2">
-                        <Plane size={14} /> FLIGHTS
-                    </h3>
-                    {flights.map(item => <FlightCard key={item.id} item={item} onClick={() => onEdit(item)} />)}
-                </section>
-            )}
-            {hotels.length > 0 && (
-                <section>
-                    <h3 className="text-sm font-bold text-[#8D6E63] mb-3 ml-1 flex items-center gap-2">
-                        <BedDouble size={14} /> HOTELS
-                    </h3>
-                    {hotels.map(item => <HotelCard key={item.id} item={item} onClick={() => onEdit(item)} />)}
-                </section>
-            )}
-            {rentals.length > 0 && (
-                <section>
-                    <h3 className="text-sm font-bold text-[#8D6E63] mb-3 ml-1 flex items-center gap-2">
-                        <Car size={14} /> RENTAL CAR
-                    </h3>
-                    {rentals.map(item => <RentalCard key={item.id} item={item} onClick={() => onEdit(item)} />)}
-                </section>
-            )}
-        </div>
-    );
-};
-
-const ExpensePage = ({ 
-    expenses, 
-    onEdit,
-    exchangeRate,
-    setExchangeRate
-}: { 
-    expenses: ExpenseItem[], 
-    onEdit: (item: ExpenseItem) => void,
-    exchangeRate: number,
-    setExchangeRate: (rate: number) => void
-}) => {
-    
-    // Calculate Totals
-    const totalJPY = expenses.filter(e => e.currency === 'JPY').reduce((acc, curr) => acc + curr.amount, 0);
-    const totalTWD = expenses.filter(e => e.currency === 'TWD').reduce((acc, curr) => acc + curr.amount, 0);
-    
-    // Group by Date
-    const groupedExpenses = useMemo(() => {
-        const groups: Record<string, ExpenseItem[]> = {};
-        expenses.forEach(item => {
-            if (!groups[item.date]) groups[item.date] = [];
-            groups[item.date].push(item);
-        });
-        return groups;
-    }, [expenses]);
-    
-    const sortedDates = Object.keys(groupedExpenses).sort();
-
-    return (
-        <div className="pb-24 space-y-6">
-            {/* Dashboard */}
-            <section className="grid grid-cols-2 gap-3">
-                <Card className="flex flex-col items-center justify-center gap-1 py-4 bg-white border-[#E0E5D5]">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                        <JapaneseYen size={12}/> 日幣總支
-                    </div>
-                    <div className="font-extrabold text-xl text-[#4A4A4A]">¥{totalJPY.toLocaleString()}</div>
-                </Card>
-                <Card className="flex flex-col items-center justify-center gap-1 py-4 bg-white border-[#E0E5D5]">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                        <DollarSign size={12}/> 台幣總支
-                    </div>
-                    <div className="font-extrabold text-xl text-[#4A4A4A]">${totalTWD.toLocaleString()}</div>
-                </Card>
-                
-                {/* Rate Setting */}
-                <Card className="col-span-2 flex items-center justify-between py-2 px-4 bg-[#F7F4EB] border border-[#E0E5D5]/50">
-                    <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
-                        <Settings size={12} /> 匯率設定 (JPY → TWD)
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <input 
-                            type="number" 
-                            step="0.001"
-                            value={exchangeRate}
-                            onChange={(e) => setExchangeRate(parseFloat(e.target.value))}
-                            className="w-16 text-right font-bold text-[#4A4A4A] bg-white border border-[#E0E5D5] rounded-md px-1 py-0.5 text-sm outline-none focus:border-[#88B04B]"
-                        />
-                    </div>
-                </Card>
-
-                <div className="col-span-2 text-center text-[10px] text-gray-400 font-bold">
-                    約合台幣總計: <span className="text-[#88B04B]">${(totalTWD + totalJPY * exchangeRate).toLocaleString(undefined, {maximumFractionDigits:0})}</span>
-                </div>
-            </section>
-
-            {/* Expense List */}
-            <div className="space-y-6">
-                {sortedDates.map(date => (
-                    <div key={date}>
-                        <h3 className="text-sm font-bold text-[#8D6E63] mb-3 ml-1 bg-[#E0E5D5]/30 inline-block px-2 py-1 rounded-md">
-                            {date}
-                        </h3>
-                        <div className="space-y-3">
-                            {groupedExpenses[date].map(item => {
-                                const style = TYPE_STYLES[item.category] || TYPE_STYLES.other;
-                                const Icon = style.icon;
-                                const payment = PAYMENT_METHODS.find(m => m.value === item.paymentMethod) || PAYMENT_METHODS[0];
-                                const PaymentIcon = payment.icon;
-
-                                return (
-                                    <Card key={item.id} className="flex justify-between items-center p-3 cursor-pointer hover:border-[#88B04B]" noPadding onClick={() => onEdit(item)}>
-                                        <div className="flex items-center gap-3 pl-3">
-                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center`} style={{ backgroundColor: style.bg, color: style.color }}>
-                                                <Icon size={16} />
-                                            </div>
-                                            <div>
-                                                <div className="font-bold text-sm text-[#4A4A4A]">{item.title}</div>
-                                                <div className="flex items-center gap-2 mt-0.5">
-                                                     <div className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 flex items-center gap-1">
-                                                         <PaymentIcon size={10} /> {payment.label}
-                                                     </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="pr-4 text-right">
-                                            <div className={cn("font-extrabold text-sm", item.currency === 'JPY' ? "text-[#4A4A4A]" : "text-[#FF8C42]")}>
-                                                {item.currency === 'JPY' ? '¥' : '$'}{item.amount.toLocaleString()}
-                                            </div>
-                                            <div className="text-[10px] text-gray-300 font-bold">{item.currency}</div>
-                                        </div>
-                                    </Card>
-                                );
-                            })}
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-const MustListPage = ({
-    items,
-    onToggle,
-    onEdit
-}: {
-    items: MustItem[],
-    onToggle: (id: string) => void,
-    onEdit: (item: MustItem) => void
-}) => {
-    const [activeTab, setActiveTab] = useState<MustType>('eat');
-
-    const filteredItems = items.filter(item => item.type === activeTab);
-    
-    // Group by Area
-    const groupedItems = useMemo(() => {
-        const groups: Record<string, MustItem[]> = {};
-        MUST_AREAS.forEach(area => groups[area] = []);
-        filteredItems.forEach(item => {
-            const area = item.area || '其他';
-            if (!groups[area]) groups[area] = [];
-            groups[area].push(item);
-        });
-        return groups;
-    }, [filteredItems]);
-
-    const openGoogleMap = (name: string, area: string, location?: string) => {
-        const query = encodeURIComponent(location || `${area} ${name}`);
-        window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
-    };
-
-    return (
-        <div className="pb-24 space-y-6">
-            {/* Tabs */}
-            <div className="flex gap-2 bg-white p-1 rounded-xl shadow-sm border border-[#E0E5D5]">
-                <button
-                    onClick={() => setActiveTab('eat')}
-                    className={cn(
-                        "flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all",
-                        activeTab === 'eat' ? "bg-[#FF8C42] text-white shadow-soft" : "text-gray-400 hover:bg-gray-50"
-                    )}
-                >
-                    <Utensils size={16} /> 美食 (EAT)
-                </button>
-                <button
-                    onClick={() => setActiveTab('buy')}
-                    className={cn(
-                        "flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all",
-                        activeTab === 'buy' ? "bg-[#88B04B] text-white shadow-soft" : "text-gray-400 hover:bg-gray-50"
-                    )}
-                >
-                    <Gift size={16} /> 購物 (BUY)
-                </button>
-            </div>
-
-            {/* List */}
-            <div className="space-y-6">
-                {MUST_AREAS.map(area => {
-                    const areaItems = groupedItems[area];
-                    if (!areaItems || areaItems.length === 0) return null;
-
-                    return (
-                        <div key={area}>
-                            <h3 className="text-sm font-bold text-[#8D6E63] mb-3 ml-1 flex items-center gap-2">
-                                <MapPin size={14} /> {area}
-                            </h3>
-                            <div className="space-y-3">
-                                {areaItems.map(item => (
-                                    <Card 
-                                        key={item.id} 
-                                        className={cn(
-                                            "flex items-center gap-3 p-3 cursor-pointer hover:border-[#88B04B] transition-all relative overflow-hidden",
-                                            item.isCompleted && "bg-gray-50"
-                                        )}
-                                        noPadding
-                                        onClick={() => onEdit(item)}
-                                    >
-                                        {/* Left Status Bar */}
-                                        <div className={cn("w-1.5 self-stretch mr-2", activeTab === 'eat' ? "bg-[#FF8C42]" : "bg-[#88B04B]")} />
-
-                                        {/* Content */}
-                                        <div className={cn("flex-1 py-2", item.isCompleted && "opacity-50 grayscale")}>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                                                    {item.area}
-                                                </span>
-                                                <h4 className={cn("font-bold text-[#4A4A4A] leading-tight", item.isCompleted && "line-through")}>
-                                                    {item.name}
-                                                </h4>
-                                            </div>
-                                            {item.note && (
-                                                <p className="text-xs text-gray-400 line-clamp-1">{item.note}</p>
-                                            )}
-                                        </div>
-
-                                        {/* Actions */}
-                                        <div className="flex items-center gap-1 pr-3">
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); openGoogleMap(item.name, item.area, item.location); }}
-                                                className="w-9 h-9 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center hover:bg-blue-100 transition-colors"
-                                            >
-                                                <MapPin size={16} />
-                                            </button>
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
-                                                className={cn(
-                                                    "w-9 h-9 rounded-full border-2 flex items-center justify-center transition-colors",
-                                                    item.isCompleted 
-                                                        ? "bg-[#88B04B] border-[#88B04B] text-white" 
-                                                        : "border-[#E0E5D5] text-transparent hover:border-[#88B04B]"
-                                                )}
-                                            >
-                                                <Check size={16} strokeWidth={3} />
-                                            </button>
-                                        </div>
-                                    </Card>
-                                ))}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-};
-
-const SchedulePage = ({ 
-    tripData, 
-    selectedDate, 
-    setSelectedDate, 
-    updateEventsForDay, 
-    openModal, 
-    setEditingEvent 
-}: any) => {
-  
-  // Drag and Drop state
-  const [draggedEventId, setDraggedEventId] = useState<string | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [dailyWeather, setDailyWeather] = useState<HourlyWeather[]>([]);
-  const [isLoadingWeather, setIsLoadingWeather] = useState(false);
-  
-  const currentDayIndex = tripData.findIndex((d: TripDay) => d.date === selectedDate);
-  const currentDay = tripData[currentDayIndex] || tripData[0];
-
-  // Dynamic Weather Title using mainLocation
-  const weatherLocation = currentDay.mainLocation;
-
-  // Fetch Weather when location changes
-  useEffect(() => {
-      setIsLoadingWeather(true);
-      fetchWeatherForLocation(weatherLocation).then(data => {
-          setDailyWeather(data);
-          setIsLoadingWeather(false);
-      });
-  }, [weatherLocation]);
-
-  // --- Handlers ---
-  const openGoogleMaps = (location: string) => {
-      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
-      window.open(url, '_blank');
-  };
-
-  // Note: handleNoteChange removed as direct editing is removed
-  // If we need to update note via modal, it's done via handleSaveTripEvent in App
-
-  // --- Drag and Drop Handlers ---
-  const handleDragStart = (e: React.DragEvent, id: string) => {
-    setDraggedEventId(id);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e: React.DragEvent, targetId: string) => {
-      e.preventDefault();
-      if (!draggedEventId || draggedEventId === targetId) return;
-
-      const fromIndex = currentDay.events.findIndex((e: TripEvent) => e.id === draggedEventId);
-      const toIndex = currentDay.events.findIndex((e: TripEvent) => e.id === targetId);
-
-      if (fromIndex < 0 || toIndex < 0) return;
-
-      const newEvents = [...currentDay.events];
-      const [movedItem] = newEvents.splice(fromIndex, 1);
-      newEvents.splice(toIndex, 0, movedItem);
-
-      updateEventsForDay(newEvents);
-  };
-
-  const handleDragEnd = () => {
-      setDraggedEventId(null);
-  };
-
-  // --- Renderers ---
-  const renderEventCard = (event: TripEvent) => {
-      const style = TYPE_STYLES[event.type] || TYPE_STYLES.other;
-      const Icon = style.icon;
-      const isFlight = event.type === 'flight';
-
-      if (isFlight) {
-        return (
-            <div key={event.id} className="relative group">
-               <div 
-                 className="absolute -left-3 top-1/2 -translate-y-1/2 p-2 cursor-grab text-gray-300 hover:text-[#88B04B]"
-                 draggable
-                 onDragStart={(e) => handleDragStart(e, event.id)}
-                 onDragEnd={handleDragEnd}
-               >
-                   <GripVertical size={16} />
-               </div>
-               
-               <Card 
-                  className="bg-white ml-4 relative overflow-hidden border-none shadow-ticket"
-                  noPadding
-                  draggable
-                  onDragOver={(e) => handleDragOver(e, event.id)}
-                  // Removing onClick to prevent modal open, now specific buttons do actions
-               >
-                    <div className="h-2 bg-[#0EA5E9]" />
-                    <div className="p-4 flex gap-4">
-                        <div className="flex flex-col items-center justify-center border-r-2 border-dashed border-gray-200 pr-4">
-                             <Plane size={24} className="text-[#0EA5E9] mb-1" />
-                             <span className="text-xs font-bold text-gray-400">FLIGHT</span>
-                        </div>
-                        <div className="flex-1">
-                             <div className="flex justify-between items-start">
-                                 <h4 className="font-extrabold text-lg text-[#4A4A4A]">{event.title}</h4>
-                                 
-                                 {/* Action Buttons */}
-                                 <div className="flex gap-2">
-                                     <button 
-                                        onClick={(e) => { e.stopPropagation(); setEditingEvent(event); openModal(); }}
-                                        className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400"
-                                     >
-                                         <Edit3 size={16} />
-                                     </button>
-                                 </div>
-                             </div>
-                             <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                                 <Clock size={14} /> 
-                                 <span className="font-mono font-bold">{event.time}</span>
-                                 <span className="text-gray-300">|</span>
-                                 <span>{event.location}</span>
-                             </div>
-                             
-                             {/* Description Area (Read Only) */}
-                             {event.description && (
-                                <div className="mt-2 text-xs bg-[#E0F2FE] text-[#0369A1] px-2 py-1 rounded inline-block font-bold">
-                                     {event.description}
-                                </div>
-                             )}
-                             
-                             {/* Navigation Button */}
-                             <div className="mt-3">
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); openGoogleMaps(event.location || event.title); }}
-                                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-50 text-blue-600 font-bold text-sm hover:bg-blue-100 transition-colors shadow-sm"
-                                >
-                                    <MapPin size={16} /> 導航至 {event.location || '目的地'}
-                                </button>
-                             </div>
-                        </div>
-                    </div>
-                    <div className="absolute -left-2 top-1/2 w-4 h-4 bg-[#F7F4EB] rounded-full" />
-                    <div className="absolute -right-2 top-1/2 w-4 h-4 bg-[#F7F4EB] rounded-full" />
-               </Card>
-            </div>
-        );
-      }
-
-      return (
-        <div key={event.id} className="flex gap-4 group relative items-start" 
-             onDragOver={(e) => handleDragOver(e, event.id)}>
-          
-          <div className="w-12 flex flex-col items-center pt-1 gap-1 flex-shrink-0 z-10 bg-[#F7F4EB]">
-            <span className="text-sm font-bold text-gray-500 font-mono tracking-tight">{event.time}</span>
-            <div 
-              className="w-3 h-3 rounded-full ring-4 ring-[#F7F4EB] transition-colors" 
-              style={{ backgroundColor: style.color }}
-            />
-          </div>
-
-          <div 
-            className="absolute left-10 top-8 text-gray-300 hover:text-[#88B04B] cursor-grab z-20 opacity-0 group-hover:opacity-100 transition-opacity"
-            draggable
-            onDragStart={(e) => handleDragStart(e, event.id)}
-            onDragEnd={handleDragEnd}
-          >
-              <GripVertical size={16} />
-          </div>
-
-          <Card 
-            className={cn(
-                "flex-1 transition-all relative overflow-hidden group-hover:shadow-soft-hover select-none",
-                draggedEventId === event.id ? "dragging" : ""
-            )}
-          >
-             <div className="absolute top-0 left-0 right-0 h-1 opacity-60" style={{ backgroundColor: style.color }} />
-             
-            <div className="flex justify-between items-start mb-2 mt-1">
-              <span 
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold"
-                style={{ backgroundColor: style.bg, color: style.color }}
-              >
-                <Icon size={12} strokeWidth={2.5} /> {style.label}
-              </span>
-              
-              {/* Edit Button */}
-              <button 
-                className="p-2 rounded-full text-gray-300 hover:text-gray-500 hover:bg-gray-100 -mr-2 -mt-2"
-                title="編輯"
-                onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingEvent(event);
-                    openModal();
-                }}
-              >
-                  <Edit3 size={18} />
-              </button>
-            </div>
-            
-            <h4 className="font-bold text-lg text-[#4A4A4A] leading-tight mb-1 pr-8">{event.title}</h4>
-            
-            <div className="space-y-1 mb-3">
-                {event.location && (
-                    <div className="flex items-center gap-1 text-xs text-gray-400 font-medium">
-                        <Navigation size={10} /> 
-                        <span>{event.location}</span>
-                    </div>
-                )}
-                
-                {(event.businessHours || event.ticketPrice) && (
-                    <div className="flex gap-3 text-[10px] text-gray-500 font-bold mt-1">
-                        {event.businessHours && (
-                            <span className="flex items-center gap-1"><Clock size={10}/> {event.businessHours}</span>
-                        )}
-                        {event.ticketPrice && (
-                            <span className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-1.5 rounded"><Ticket size={10}/> {event.ticketPrice}</span>
-                        )}
-                    </div>
-                )}
-            </div>
-            
-            {/* Description Area (Read Only) */}
-            {event.description && (
-                <div className="text-xs text-[#8D6E63]/90 bg-[#F7F4EB] p-2 rounded-lg border border-[#E0E5D5]/50 leading-relaxed mb-3">
-                    {event.description}
-                    {event.notes && <p className="mt-1 text-[10px] text-gray-400 border-t border-[#E0E5D5] pt-1">💡 {event.notes}</p>}
-                </div>
-            )}
-            
-            {/* Navigation Button (Full width at bottom) */}
-            <div className="mt-2">
-                <button 
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        openGoogleMaps(event.location || event.title);
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-50 text-blue-600 font-bold text-sm hover:bg-blue-100 transition-colors shadow-sm"
-                >
-                    <MapPin size={16} /> 導航至 {event.location || '目的地'}
-                </button>
-            </div>
-          </Card>
-        </div>
-      );
-  };
-
-  return (
-    <>
-      {/* 1. Date Selector */}
-      <section className="mb-4 sticky top-0 bg-[#F7F4EB] z-30 py-2 -mx-5 px-5 shadow-sm">
-        <div 
-          ref={scrollContainerRef}
-          className="flex overflow-x-auto gap-3 pb-1 scrollbar-hide snap-x"
-        >
-          {tripData.map((day: TripDay) => {
-            const isSelected = selectedDate === day.date;
-            return (
-              <button
-                key={day.date}
-                onClick={() => setSelectedDate(day.date)}
-                className={cn(
-                  "flex-shrink-0 flex flex-col items-center justify-center w-[60px] h-[80px] rounded-2xl border-2 transition-all duration-300 snap-center",
-                  isSelected 
-                    ? "bg-[#88B04B] border-[#88B04B] text-white shadow-soft translate-y-1" 
-                    : "bg-white border-[#E0E5D5] text-[#8D6E63] hover:border-[#88B04B]/50"
-                )}
-              >
-                <span className={cn("text-2xl font-black leading-none", isSelected ? "text-white" : "text-[#88B04B]")}>
-                  {day.weekday}
-                </span>
-                <span className={cn("text-sm font-bold opacity-80 mt-1")}>
-                  {day.date.split('-')[2]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 2. Hourly Weather Forecast */}
-      <section className="mb-6 animate-fade-in">
-        <Card className="px-5 py-4 bg-gradient-to-br from-blue-50 to-white border-blue-100 relative overflow-hidden min-h-[140px]">
-             <div className="flex items-center gap-2 mb-3 text-blue-800 font-bold text-sm">
-                 <CloudSun size={18} />
-                 📍 {weatherLocation} 的天氣
-             </div>
-             
-             {isLoadingWeather ? (
-                 <div className="flex items-center justify-center h-20 text-blue-300">
-                     <Loader2 className="animate-spin" size={24} />
-                 </div>
-             ) : (
-                 <div className="flex overflow-x-auto gap-4 pb-2 scrollbar-hide">
-                    {dailyWeather.map((hour: HourlyWeather, idx: number) => (
-                        <div key={idx} className="flex flex-col items-center gap-1 flex-shrink-0 w-12 animate-fade-in" style={{ animationDelay: `${idx * 50}ms` }}>
-                            <span className="text-xs text-gray-400 font-bold">{hour.time}</span>
-                            <hour.icon size={24} className="text-[#0EA5E9] my-1" />
-                            <span className="text-sm font-extrabold text-[#4A4A4A]">{hour.temp}</span>
-                        </div>
-                    ))}
-                 </div>
-             )}
-        </Card>
-      </section>
-
-      {/* 3. Timeline & Events */}
-      <section className="relative pb-24">
-        <div className="absolute left-[23px] top-2 bottom-6 w-0.5 bg-[#E0E5D5] -z-10 border-l-2 border-dotted border-[#E0E5D5]" />
         
-        <div className="space-y-6">
-            {currentDay.events.map((event: TripEvent) => renderEventCard(event))}
-          
-          <div className="flex gap-4 opacity-50">
-             <div className="w-12 flex flex-col items-center">
-                 <div className="w-2 h-2 rounded-full bg-[#E0E5D5]" />
-             </div>
-             <div className="flex-1 text-xs text-center text-gray-400 font-bold border-t-2 border-[#E0E5D5] border-dashed pt-2">
-                End of Day {currentDay.dayNum}
-             </div>
-          </div>
+        /* 模擬手機 App 容器 */
+        #app-container {
+            width: 100%;
+            max-width: 430px;
+            background-color: #FAFAFA;
+            min-height: 100vh;
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .card-shadow { box-shadow: 0 4px 15px rgba(30, 58, 95, 0.06); }
+        .header-curve { border-bottom-left-radius: 40px; border-bottom-right-radius: 40px; }
+        
+        .nav-item { transition: all 0.2s ease; }
+        .nav-item:active { transform: scale(0.9); }
+        
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    </style>
+</head>
+<body>
+
+<div id="app" class="w-full h-full">
+    <div id="app-container" class="relative pb-24 mx-auto bg-gray-50">
+
+        <!-- 頁首區塊 -->
+        <header class="bg-ise-blue text-white header-curve relative h-64 shadow-lg overflow-hidden shrink-0">
+            <div class="absolute inset-0 opacity-40 bg-[url('https://images.unsplash.com/photo-1545569341-9eb8b30979d9?q=80&w=1000&auto=format&fit=crop')] bg-cover bg-center mix-blend-overlay"></div>
+            
+            <div class="relative z-10 p-6 pt-12">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h1 class="text-3xl font-bold tracking-widest mb-1 leading-snug">李家名古屋<br>伊勢志摩之旅</h1>
+                        <p class="text-xs opacity-80 font-light tracking-[0.2em] uppercase mt-1">Mie Prefecture Trip</p>
+                    </div>
+                    <!-- 全域編輯按鈕 -->
+                    <button @click="toggleEditMode" :class="['w-10 h-10 rounded-full flex items-center justify-center transition-all', isEditMode ? 'bg-white text-ise-blue shadow-lg scale-110' : 'bg-white/20 text-white hover:bg-white/30']">
+                        <i :class="isEditMode ? 'fa-solid fa-check' : 'fa-solid fa-pen'"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主內容區塊 -->
+        <main class="-mt-10 relative z-10 px-5 min-h-[60vh] pb-8">
+            
+            <!-- TAB 1: 每日行程 -->
+            <div v-if="currentTab === 'itinerary'">
+                <!-- 日期選擇器 -->
+                <div class="flex overflow-x-auto hide-scrollbar space-x-3 py-4 mb-2 pb-6">
+                    <div v-for="(day, index) in itineraryData" :key="index" 
+                         @click="selectedDateIndex = index"
+                         :class="['flex-shrink-0 flex flex-col items-center justify-center w-[4.5rem] h-20 rounded-2xl transition-all cursor-pointer card-shadow border duration-300', selectedDateIndex === index ? 'bg-ise-blue text-white border-ise-blue translate-y-1 shadow-inner' : 'bg-white text-gray-400 border-white hover:bg-gray-50']">
+                        <span class="text-[10px] font-medium tracking-wide mb-1">{{ day.dayOfWeek }}</span>
+                        <span class="text-2xl font-bold font-mono">{{ day.date.split('/')[1] }}</span>
+                    </div>
+                </div>
+
+                <!-- 天氣 Widget (整合 Open-Meteo API) -->
+                <div class="bg-white rounded-3xl p-5 mb-6 flex items-center justify-between card-shadow border border-gray-100">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 rounded-full bg-ise-gold/10 flex items-center justify-center text-ise-gold text-2xl relative">
+                            <i :class="getWeatherIcon(currentWeather.code)" class="transition-all duration-500"></i>
+                            <div v-if="weatherLoading" class="absolute inset-0 flex items-center justify-center bg-white/80 rounded-full">
+                                <i class="fa-solid fa-circle-notch fa-spin text-xs"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex items-baseline space-x-2">
+                                <span class="text-3xl font-bold text-slate-800">{{ currentWeather.temp }}°</span>
+                                <span class="text-sm text-gray-400">{{ currentWeather.text }}</span>
+                            </div>
+                            <div class="text-xs text-gray-400 mt-0.5 flex items-center">
+                                <i class="fa-solid fa-location-dot mr-1 text-ise-blue/50"></i>
+                                {{ itineraryData[selectedDateIndex].mainLocationName }} (即時)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 行程列表 -->
+                <div class="space-y-4 pb-28">
+                    <transition-group name="fade">
+                        <div v-for="(item, idx) in currentDayItinerary" :key="item.id" 
+                             class="group relative bg-white rounded-2xl p-5 card-shadow border-l-[6px] transition-all hover:scale-[1.01] active:scale-[0.99]"
+                             :class="[getCategoryBorderColor(item.category), isEditMode ? '' : '']">
+                            
+                            <!-- 編輯模式控制項 -->
+                            <div v-if="isEditMode" class="absolute -top-3 -right-2 z-20 flex space-x-2">
+                                <button @click.stop="openEditModal(item, idx, 'itinerary')" class="w-8 h-8 rounded-full bg-ise-blue text-white shadow-md flex items-center justify-center hover:bg-blue-600">
+                                    <i class="fa-solid fa-pencil text-xs"></i>
+                                </button>
+                                <button @click.stop="requestDelete(item.id, 'itinerary')" class="w-8 h-8 rounded-full bg-red-500 text-white shadow-md flex items-center justify-center hover:bg-red-600">
+                                    <i class="fa-solid fa-trash text-xs"></i>
+                                </button>
+                            </div>
+                            <div v-if="isEditMode" class="absolute top-1/2 -translate-y-1/2 -left-3 z-20 flex flex-col bg-white shadow-md rounded-lg overflow-hidden border border-gray-200">
+                                <button @click.stop="moveItem(idx, -1)" v-if="idx > 0" class="p-1 hover:bg-gray-100 text-ise-blue"><i class="fa-solid fa-caret-up"></i></button>
+                                <button @click.stop="moveItem(idx, 1)" v-if="idx < currentDayItinerary.length - 1" class="p-1 hover:bg-gray-100 text-ise-blue"><i class="fa-solid fa-caret-down"></i></button>
+                            </div>
+
+                            <!-- 航班特別樣式 -->
+                            <div v-if="item.category === '航班'" class="pr-8">
+                                <div class="flex justify-between items-center mb-4">
+                                    <span class="bg-ise-blue text-white text-[10px] px-2 py-1 rounded font-bold tracking-wider">{{ item.category }}</span>
+                                    <span class="text-sm font-bold text-ise-blue font-mono">{{ item.subTitle }}</span>
+                                </div>
+                                <div class="flex justify-between items-center px-2">
+                                    <div class="text-center">
+                                        <div class="text-2xl font-bold text-slate-800">{{ item.time.split('➤')[0].trim().split(' ')[0] }}</div>
+                                        <div class="text-xs text-gray-400 font-bold tracking-widest mt-1">TPE</div>
+                                    </div>
+                                    <div class="flex-1 px-4 text-center relative">
+                                        <div class="h-[1px] bg-gray-300 w-full absolute top-1/2 left-0 -z-0"></div>
+                                        <i class="fa-solid fa-plane-departure text-ise-gold bg-white px-2 relative z-10 text-2xl"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <div class="text-2xl font-bold text-slate-800">{{ item.time.split('➤')[1].trim().split(' ')[0] }}</div>
+                                        <div class="text-xs text-gray-400 font-bold tracking-widest mt-1">NGO</div>
+                                    </div>
+                                </div>
+                                <div class="mt-4 text-xs text-center text-gray-500 bg-gray-50 py-1 rounded">{{ item.title }}</div>
+                                
+                                <div v-if="item.story" class="mt-3 bg-amber-50 rounded-lg p-3 border border-amber-100 flex items-start">
+                                    <i class="fa-solid fa-circle-info text-amber-400 text-xs mt-0.5 mr-2"></i>
+                                    <p class="text-xs text-amber-800 leading-relaxed">{{ item.story }}</p>
+                                </div>
+
+                                <div class="flex justify-end mt-2" v-if="!isEditMode">
+                                    <button @click.stop="openMap(item.title)" class="text-xs text-ise-blue flex items-center bg-blue-50 px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors">
+                                        <i class="fa-solid fa-location-arrow mr-1"></i> 機場導航
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- 一般行程樣式 -->
+                            <div v-else class="pr-8">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center space-x-2">
+                                        <span class="text-[10px] font-bold px-2 py-0.5 rounded text-white" :class="getCategoryBadgeColor(item.category)">{{ item.category }}</span>
+                                        <span class="text-sm font-bold text-ise-blue font-mono" v-if="item.time">{{ item.time }}</span>
+                                    </div>
+                                    <div v-if="item.mapcode" class="flex items-center bg-gray-100 px-2 py-0.5 rounded text-[10px] text-gray-600 font-mono tracking-wider cursor-pointer" @click.stop="copyToClipboard(item.mapcode)">
+                                        <i class="fa-solid fa-car-side mr-1"></i>{{ item.mapcode }}
+                                    </div>
+                                </div>
+                                
+                                <h3 class="text-lg font-bold text-slate-800 mb-1 leading-snug">{{ item.title }}</h3>
+                                
+                                <div v-if="item.cost" class="flex items-center text-sm text-ise-gold font-bold mb-2">
+                                    <i class="fa-solid fa-yen-sign mr-1"></i>{{ Number(item.cost).toLocaleString() }}
+                                </div>
+
+                                <p class="text-sm text-gray-500 leading-relaxed whitespace-pre-line" v-if="item.desc">{{ item.desc }}</p>
+                                
+                                <div v-if="item.story" class="mt-3 bg-amber-50 rounded-lg p-3 border border-amber-100 flex items-start">
+                                    <i class="fa-regular fa-lightbulb text-amber-500 text-xs mt-0.5 mr-2"></i>
+                                    <p class="text-xs text-amber-800 leading-relaxed text-justify">{{ item.story }}</p>
+                                </div>
+
+                                <div class="flex justify-end mt-2 space-x-2" v-if="!isEditMode">
+                                    <button @click.stop="openMap(item.address || item.title)" class="text-xs text-ise-blue flex items-center bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors shadow-sm font-bold">
+                                        <i class="fa-solid fa-location-arrow mr-1"></i> {{ item.address ? '導航' : '地圖' }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </transition-group>
+                    <div class="h-10 text-center text-gray-300 text-xs italic">- Enjoy your trip -</div>
+                </div>
+            </div>
+
+            <!-- TAB 2: 資訊頁面 -->
+            <div v-if="currentTab === 'info'" class="space-y-6 pb-28 animate-fade-in">
+                <!-- 資訊子分頁 -->
+                <div class="bg-white rounded-3xl p-1 card-shadow flex mb-2 mt-4">
+                    <button v-for="sub in ['航班', '住宿', '租車']" :key="sub" @click="infoSubTab = sub"
+                        :class="['flex-1 py-2 rounded-2xl text-sm font-medium transition-colors', infoSubTab === sub ? 'bg-ise-blue text-white shadow-md' : 'text-gray-400 hover:text-gray-600']">
+                        {{ sub }}
+                    </button>
+                </div>
+
+                <div class="bg-white rounded-3xl p-6 card-shadow min-h-[200px]">
+                    <div class="space-y-6">
+                        <div v-for="(item, idx) in currentInfoList" :key="item.id" class="relative group border-b border-gray-100 pb-4 last:border-0 last:pb-0">
+                            
+                            <div v-if="isEditMode" class="absolute right-0 top-0 flex space-x-2 z-10">
+                                <button @click="openEditModal(item, idx, 'info')" class="w-7 h-7 bg-ise-blue text-white rounded-full flex items-center justify-center shadow-md"><i class="fa-solid fa-pencil text-[10px]"></i></button>
+                                <button @click="requestDelete(item.id, 'info')" class="w-7 h-7 bg-red-500 text-white rounded-full flex items-center justify-center shadow-md"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                            </div>
+
+                            <div v-if="infoSubTab === '航班'">
+                                <div class="text-xs font-bold text-gray-400 mb-1">{{ item.desc }}</div>
+                                <h4 class="text-xl font-bold text-ise-blue">{{ item.title }}</h4>
+                                <div class="mt-3 flex justify-between items-center">
+                                    <div><div class="text-xl font-bold">{{ item.startTime }}</div><div class="text-xs text-gray-500">{{ item.startLoc }}</div></div>
+                                    <i class="fa-solid fa-plane-departure text-gray-300 text-xl"></i>
+                                    <div><div class="text-xl font-bold">{{ item.endTime }}</div><div class="text-xs text-gray-500">{{ item.endLoc }}</div></div>
+                                </div>
+                            </div>
+
+                            <div v-if="infoSubTab === '住宿'">
+                                <div class="flex justify-between items-start mb-1">
+                                    <span class="text-xs font-bold bg-ise-blue/10 text-ise-blue px-2 py-0.5 rounded">{{ item.date }}</span>
+                                    <span class="text-xs text-gray-400">{{ item.type }}</span>
+                                </div>
+                                <h4 class="font-bold text-slate-800 text-base mb-1">{{ item.title }}</h4>
+                                <div class="flex justify-between items-end">
+                                    <div class="text-sm text-gray-500">{{ item.desc }}</div>
+                                    <div class="text-sm font-bold text-ise-gold">{{ item.price }}</div>
+                                </div>
+                                <button @click="openMap(item.title)" class="w-full mt-3 py-2 border border-gray-200 rounded-xl text-xs text-gray-500 hover:bg-gray-50 flex items-center justify-center">
+                                    <i class="fa-solid fa-location-dot mr-2"></i> 導航前往
+                                </button>
+                            </div>
+
+                            <div v-if="infoSubTab === '租車'">
+                                <div class="flex items-center space-x-3 mb-3">
+                                    <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-sm text-ise-blue border border-gray-100"><i class="fa-solid fa-car"></i></div>
+                                    <div>
+                                        <h4 class="font-bold text-slate-800">{{ item.title }}</h4>
+                                        <div class="text-xs text-gray-500">{{ item.subTitle }}</div>
+                                    </div>
+                                </div>
+                                <p class="text-sm text-gray-600 whitespace-pre-line">{{ item.desc }}</p>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: 必吃必買 -->
+            <div v-if="currentTab === 'shopping'" class="pb-28">
+                <!-- 地區 Tab 切換 -->
+                <div class="flex overflow-x-auto hide-scrollbar space-x-2 py-2 mb-4 px-1">
+                    <button v-for="region in ['全部', '名古屋', '托福橫丁', '伊勢志摩', '其他']" :key="region"
+                        @click="shoppingRegion = region"
+                        :class="['whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold transition-all', shoppingRegion === region ? 'bg-ise-blue text-white shadow-md' : 'bg-white text-gray-400 hover:bg-gray-50']">
+                        {{ region }}
+                    </button>
+                </div>
+
+                <div v-if="filteredShoppingList.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-300">
+                    <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4"><i class="fa-solid fa-utensils text-3xl"></i></div>
+                    <p>這裡還沒有必吃必買...</p>
+                </div>
+                <!-- 純文字卡片列表 -->
+                <div class="grid grid-cols-1 gap-3">
+                    <div v-for="(item, idx) in filteredShoppingList" :key="item.id" class="bg-white rounded-xl p-4 card-shadow relative group hover:scale-[1.01] transition-transform flex flex-col justify-between min-h-[100px]">
+                        <!-- 編輯模式 -->
+                        <div v-if="isEditMode" class="absolute top-2 right-2 z-20 flex space-x-2">
+                            <button @click="openEditModal(item, idx, 'shopping')" class="w-7 h-7 bg-ise-blue text-white rounded-full flex items-center justify-center shadow-md"><i class="fa-solid fa-pencil text-[10px]"></i></button>
+                            <button @click="requestDelete(item.id, 'shopping')" class="w-7 h-7 bg-red-500 text-white rounded-full flex items-center justify-center shadow-md"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                        </div>
+                        
+                        <div>
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="text-[10px] text-white bg-ise-gold px-2 py-0.5 rounded font-bold">{{ item.region || '未分類' }}</span>
+                                <span class="text-sm font-bold text-ise-blue" v-if="item.price">¥{{ item.price }}</span>
+                            </div>
+                            <h4 class="font-bold text-slate-800 text-lg mb-1">{{ item.name }}</h4>
+                            <p class="text-xs text-gray-500 whitespace-pre-line mb-2" v-if="item.desc">{{ item.desc }}</p>
+                            
+                            <div v-if="item.story" class="mt-2 bg-pink-50 rounded p-2 border border-pink-100 flex items-start">
+                                <i class="fa-solid fa-star text-pink-400 text-xs mt-0.5 mr-2"></i>
+                                <p class="text-xs text-pink-800 leading-relaxed">{{ item.story }}</p>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end mt-2 pt-2 border-t border-gray-50">
+                            <button @click.stop="openMap(item.address || item.name)" class="text-xs text-ise-blue flex items-center font-bold bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100">
+                                <i class="fa-solid fa-location-arrow mr-1"></i> {{ item.address ? '導航' : '地圖搜尋' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: 花費紀錄 -->
+            <div v-if="currentTab === 'expense'" class="pb-28">
+                <div class="bg-gradient-to-br from-ise-blue to-slate-800 rounded-3xl p-6 text-white card-shadow mb-6 relative overflow-hidden">
+                    <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-2xl"></div>
+                    <div class="relative z-10">
+                        <div class="text-xs opacity-70 mb-1 uppercase tracking-widest">Total Expenses (Est. TWD)</div>
+                        <div class="text-4xl font-bold font-mono tracking-tight mb-4">NT$ {{ totalExpenseTWD.toLocaleString() }}</div>
+                        <div class="flex space-x-3">
+                            <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">CASH (JPY)</div><div class="font-bold text-sm">¥{{ expenseSummary.cash.toLocaleString() }}</div></div>
+                            <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">CARD (JPY)</div><div class="font-bold text-sm">¥{{ expenseSummary.card.toLocaleString() }}</div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.03)] min-h-[500px] p-5 -mx-5">
+                    <div class="flex justify-between items-center mb-6 px-2">
+                        <h3 class="font-bold text-slate-800">近期消費</h3>
+                        <span class="text-xs text-gray-400">{{ expenses.length }} 筆紀錄</span>
+                    </div>
+                    <div class="space-y-5">
+                        <div v-for="(group, date) in expensesByDate" :key="date">
+                             <div class="sticky top-0 bg-gray-50/95 backdrop-blur py-2 px-2 text-xs font-bold text-gray-400 z-10">{{ date }}</div>
+                             <div v-for="(record, idx) in group" :key="record.id" class="flex items-center justify-between group relative py-3 border-b border-gray-50 last:border-0">
+                                <div v-if="isEditMode" class="absolute -right-2 top-1/2 -translate-y-1/2 flex space-x-2 z-10 bg-white pl-2">
+                                     <button @click="openEditModal(record, idx, 'expense')" class="w-8 h-8 rounded-full bg-ise-blue text-white shadow flex items-center justify-center"><i class="fa-solid fa-pencil text-xs"></i></button>
+                                     <button @click="requestDelete(record.id, 'expense')" class="w-8 h-8 rounded-full bg-red-500 text-white shadow flex items-center justify-center"><i class="fa-solid fa-trash text-xs"></i></button>
+                                </div>
+                                <div class="flex items-center space-x-4">
+                                    <div>
+                                        <div class="font-bold text-slate-800 text-sm flex items-center">
+                                            <span class="text-[10px] text-ise-blue bg-blue-50 px-1.5 py-0.5 rounded mr-2 font-normal">{{ record.category }}</span>
+                                            {{ record.name }}
+                                        </div>
+                                        <div class="text-[10px] text-gray-400 mt-0.5 ml-1">{{ record.payment }}</div>
+                                    </div>
+                                </div>
+                                <div class="text-right" :class="isEditMode ? 'opacity-20' : ''">
+                                    <div class="font-bold text-slate-800 font-mono text-sm">
+                                        <span v-if="record.currency === 'TWD'" class="text-xs">NT$</span>
+                                        <span v-else>¥</span>
+                                        {{ Number(record.amount).toLocaleString() }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="expenses.length === 0" class="text-center py-10 text-gray-300 text-sm">尚未有記帳紀錄</div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- 底部導航列 -->
+        <div class="fixed bottom-0 left-0 right-0 mx-auto w-full max-w-[430px] bg-white border-t border-gray-100 flex justify-around items-end h-[88px] pb-6 z-40 text-xs shadow-[0_-5px_20px_rgba(0,0,0,0.03)] px-2">
+            
+            <button @click="currentTab = 'itinerary'" class="nav-item flex flex-col items-center justify-center w-16 space-y-1" :class="currentTab === 'itinerary' ? 'text-ise-blue' : 'text-gray-400 hover:text-gray-500'">
+                <div :class="['w-10 h-8 rounded-xl flex items-center justify-center mb-1 transition-colors', currentTab === 'itinerary' ? 'bg-blue-50' : 'bg-transparent']"><i class="fa-solid fa-map-location-dot text-xl"></i></div>
+                <span class="scale-90 font-medium">行程</span>
+            </button>
+            
+            <button @click="currentTab = 'info'" class="nav-item flex flex-col items-center justify-center w-16 space-y-1" :class="currentTab === 'info' ? 'text-ise-blue' : 'text-gray-400 hover:text-gray-500'">
+                 <div :class="['w-10 h-8 rounded-xl flex items-center justify-center mb-1 transition-colors', currentTab === 'info' ? 'bg-blue-50' : 'bg-transparent']"><i class="fa-solid fa-circle-info text-xl"></i></div>
+                <span class="scale-90 font-medium">資訊</span>
+            </button>
+
+            <button @click="openAddModal" class="w-14 h-14 rounded-full bg-ise-blue text-white shadow-lg flex items-center justify-center text-xl mb-2 hover:scale-105 transition-transform active:scale-95 mx-2">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+
+            <button @click="currentTab = 'expense'" class="nav-item flex flex-col items-center justify-center w-16 space-y-1" :class="currentTab === 'expense' ? 'text-ise-blue' : 'text-gray-400 hover:text-gray-500'">
+                 <div :class="['w-10 h-8 rounded-xl flex items-center justify-center mb-1 transition-colors', currentTab === 'expense' ? 'bg-blue-50' : 'bg-transparent']"><i class="fa-solid fa-coins text-xl"></i></div>
+                <span class="scale-90 font-medium">記帳</span>
+            </button>
+            
+            <button @click="currentTab = 'shopping'" class="nav-item flex flex-col items-center justify-center w-16 space-y-1" :class="currentTab === 'shopping' ? 'text-ise-blue' : 'text-gray-400 hover:text-gray-500'">
+                 <div :class="['w-10 h-8 rounded-xl flex items-center justify-center mb-1 transition-colors', currentTab === 'shopping' ? 'bg-blue-50' : 'bg-transparent']"><i class="fa-solid fa-utensils text-xl"></i></div>
+                <span class="scale-90 font-medium">必吃必買</span>
+            </button>
         </div>
-      </section>
-    </>
-  );
-};
 
-// --- 10. App Entry ---
-export default function App() {
-  const [activeTab, setActiveTab] = useState('schedule');
-  const [exchangeRate, setExchangeRate] = useState(0.22);
-  
-  // Trip State
-  const [tripData, setTripData] = useState<TripDay[]>(INITIAL_TRIP_DATA);
-  const [selectedDate, setSelectedDate] = useState('2026-01-14');
-  const [isTripModalOpen, setIsTripModalOpen] = useState(false);
-  const [editingTripEvent, setEditingTripEvent] = useState<TripEvent | undefined>(undefined);
+    </div>
 
-  // Booking State
-  const [bookings, setBookings] = useState<BookingItem[]>(INITIAL_BOOKINGS);
-  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
-  const [editingBooking, setEditingBooking] = useState<BookingItem | undefined>(undefined);
+    <!-- Modals -->
+    
+    <!-- 5. 刪除確認 Modal -->
+    <div v-if="showDeleteModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-6 animate-fade-in">
+        <div class="bg-white rounded-2xl w-full max-w-xs p-6 text-center shadow-2xl scale-100">
+            <div class="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 text-xl">
+                <i class="fa-solid fa-trash-can"></i>
+            </div>
+            <h3 class="font-bold text-lg text-slate-800 mb-2">確認刪除</h3>
+            <p class="text-sm text-gray-500 mb-6">刪除後將無法復原，確定要繼續嗎？</p>
+            <div class="flex space-x-3">
+                <button @click="showDeleteModal = false" class="flex-1 py-2.5 bg-gray-100 text-gray-600 font-medium rounded-xl">取消</button>
+                <button @click="executeDelete" class="flex-1 py-2.5 bg-red-500 text-white font-bold rounded-xl shadow-lg shadow-red-200">刪除</button>
+            </div>
+        </div>
+    </div>
 
-  // Expense State
-  const [expenses, setExpenses] = useState<ExpenseItem[]>(generateInitialExpenses());
-  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<ExpenseItem | undefined>(undefined);
+    <!-- 1. 新增/編輯行程 Modal -->
+    <div v-if="showAddModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-slide-up max-h-[85vh] overflow-y-auto hide-scrollbar">
+            <h3 class="font-bold text-xl mb-4 text-slate-800">{{ editIndex !== null ? '編輯行程' : '新增行程' }}</h3>
+            <div class="space-y-4">
+                <div class="grid grid-cols-3 gap-2">
+                    <button v-for="cat in ['景點','美食','購物','住宿','其他']" @click="newItem.category = cat" :class="['py-2 text-sm rounded-xl font-medium border', newItem.category === cat ? 'bg-ise-blue text-white border-ise-blue' : 'bg-white text-gray-500 border-gray-200']">{{ cat }}</button>
+                </div>
+                <div class="space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">名稱</label><input v-model="newItem.title" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20" placeholder="要去哪裡？"></div>
+                
+                <!-- 新增 MAPCODE 欄位 -->
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 ml-1">MAPCODE</label>
+                    <input v-model="newItem.mapcode" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20 font-mono" placeholder="自駕導航用 (例如: 338 058 634*55)">
+                </div>
 
-  // Must List State
-  const [mustList, setMustList] = useState<MustItem[]>(INITIAL_MUST_LIST);
-  const [isMustModalOpen, setIsMustModalOpen] = useState(false);
-  const [editingMust, setEditingMust] = useState<MustItem | undefined>(undefined);
+                <div class="space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">導航地址</label><input v-model="newItem.address" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20" placeholder="輸入地址以啟用精準導航"></div>
+                
+                <div class="flex space-x-3">
+                    <div class="flex-1 space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">時間</label><input type="time" v-model="newItem.time" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20"></div>
+                    <div class="flex-1 space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">費用 (日幣)</label><input type="number" v-model="newItem.cost" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20" placeholder="0"></div>
+                </div>
+                
+                <!-- 新增攻略故事欄位 -->
+                <div class="space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">小知識/攻略</label><textarea v-model="newItem.story" class="w-full bg-gray-50 p-3 rounded-xl h-20 outline-none focus:ring-2 focus:ring-ise-blue/20 resize-none" placeholder="必看亮點或歷史故事..."></textarea></div>
+                
+                <div class="space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">備註</label><textarea v-model="newItem.desc" class="w-full bg-gray-50 p-3 rounded-xl h-20 outline-none focus:ring-2 focus:ring-ise-blue/20 resize-none" placeholder="詳細資訊..."></textarea></div>
+            </div>
+            <div class="flex space-x-3 mt-8">
+                <button @click="showAddModal = false" class="flex-1 py-3 text-gray-500 font-medium rounded-xl hover:bg-gray-50">取消</button>
+                <button @click="saveItineraryItem" class="flex-1 py-3 bg-ise-blue text-white font-bold rounded-xl shadow-lg">{{ editIndex !== null ? '更新' : '新增' }}</button>
+            </div>
+        </div>
+    </div>
 
-  // --- Trip Handlers ---
-  const updateEventsForDay = (newEvents: TripEvent[]) => {
-      const currentDayIndex = tripData.findIndex(d => d.date === selectedDate);
-      if (currentDayIndex === -1) return;
-      const newData = [...tripData];
-      newData[currentDayIndex] = { ...newData[currentDayIndex], events: newEvents };
-      setTripData(newData);
-  };
+    <!-- 2. 新增/編輯資訊 Modal -->
+    <div v-if="showInfoModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+         <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-slide-up">
+            <h3 class="font-bold text-xl mb-4 text-slate-800">{{ editIndex !== null ? '編輯' + infoSubTab : '新增' + infoSubTab }}</h3>
+            <!-- (表單內容省略，與之前相同) -->
+            <div v-if="infoSubTab === '航班'" class="space-y-4">
+                <input v-model="newInfo.title" placeholder="航班編號" class="w-full bg-gray-50 p-3 rounded-xl outline-none">
+                <input v-model="newInfo.desc" placeholder="日期說明" class="w-full bg-gray-50 p-3 rounded-xl outline-none">
+                <div class="flex space-x-2">
+                     <input v-model="newInfo.startTime" type="time" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                     <input v-model="newInfo.startLoc" placeholder="出發地" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                </div>
+                <div class="flex space-x-2">
+                     <input v-model="newInfo.endTime" type="time" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                     <input v-model="newInfo.endLoc" placeholder="抵達地" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                </div>
+            </div>
+            <div v-if="infoSubTab === '住宿'" class="space-y-4">
+                <input v-model="newInfo.title" placeholder="飯店名稱" class="w-full bg-gray-50 p-3 rounded-xl outline-none">
+                <div class="flex space-x-2">
+                    <input v-model="newInfo.date" placeholder="日期" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                    <input v-model="newInfo.type" placeholder="訂房網" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                </div>
+                <div class="flex space-x-2">
+                    <input v-model="newInfo.desc" placeholder="房型說明" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                    <input v-model="newInfo.price" placeholder="價格" class="flex-1 bg-gray-50 p-3 rounded-xl">
+                </div>
+            </div>
+            <div v-if="infoSubTab === '租車'" class="space-y-4">
+                <input v-model="newInfo.title" placeholder="公司名稱" class="w-full bg-gray-50 p-3 rounded-xl outline-none">
+                <input v-model="newInfo.subTitle" placeholder="分店名稱" class="w-full bg-gray-50 p-3 rounded-xl outline-none">
+                <textarea v-model="newInfo.desc" placeholder="詳細資訊" class="w-full bg-gray-50 p-3 rounded-xl h-24"></textarea>
+            </div>
+            <div class="flex space-x-3 mt-8">
+                <button @click="showInfoModal = false" class="flex-1 py-3 text-gray-500 font-medium rounded-xl hover:bg-gray-50">取消</button>
+                <button @click="saveInfoItem" class="flex-1 py-3 bg-ise-blue text-white font-bold rounded-xl shadow-lg">{{ editIndex !== null ? '更新' : '新增' }}</button>
+            </div>
+         </div>
+    </div>
 
-  const handleSaveTripEvent = (data: Partial<TripEvent>) => {
-      const currentDayIndex = tripData.findIndex(d => d.date === selectedDate);
-      if (currentDayIndex === -1) return;
-      
-      const currentEvents = tripData[currentDayIndex].events;
-      let newEvents;
+    <!-- 3. 新增/編輯購物 Modal -->
+    <div v-if="showShoppingModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-slide-up max-h-[85vh] overflow-y-auto hide-scrollbar">
+            <h3 class="font-bold text-xl mb-4 text-slate-800">{{ editIndex !== null ? '編輯項目' : '新增必吃/必買' }}</h3>
+            <div class="space-y-4">
+                <select v-model="newShoppingItem.region" class="w-full bg-gray-50 p-3 rounded-xl outline-none border border-transparent focus:border-ise-blue text-slate-700">
+                    <option v-for="r in ['名古屋', '托福橫丁', '伊勢志摩', '其他']" :value="r">{{ r }}</option>
+                </select>
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 ml-1">名稱</label>
+                    <input v-model="newShoppingItem.name" placeholder="商品/餐廳名稱" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20 text-lg">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 ml-1">預算 (日幣)</label>
+                    <input v-model="newShoppingItem.price" type="number" placeholder="0" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 ml-1">地址</label>
+                    <input v-model="newShoppingItem.address" placeholder="輸入地址或Google Map連結" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-blue/20">
+                </div>
+                <!-- 新增攻略故事欄位 -->
+                <div class="space-y-2"><label class="text-xs font-bold text-gray-400 ml-1">推薦點/故事</label><textarea v-model="newShoppingItem.story" class="w-full bg-gray-50 p-3 rounded-xl h-20 outline-none focus:ring-2 focus:ring-ise-blue/20 resize-none" placeholder="為什麼必買？歷史典故..."></textarea></div>
+                
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 ml-1">備註</label>
+                    <textarea v-model="newShoppingItem.desc" placeholder="營業時間、必點菜色..." class="w-full bg-gray-50 p-3 rounded-xl h-20 outline-none focus:ring-2 focus:ring-ise-blue/20 resize-none"></textarea>
+                </div>
+            </div>
+            <div class="flex space-x-3 mt-8">
+                <button @click="showShoppingModal = false" class="flex-1 py-3 text-gray-500 font-medium rounded-xl hover:bg-gray-50">取消</button>
+                <button @click="saveShoppingItem" class="flex-1 py-3 bg-ise-blue text-white font-bold rounded-xl shadow-lg">{{ editIndex !== null ? '更新' : '加入' }}</button>
+            </div>
+        </div>
+    </div>
 
-      if (editingTripEvent) {
-          newEvents = currentEvents.map(e => e.id === editingTripEvent.id ? { ...e, ...data } as TripEvent : e);
-      } else {
-          const newEvent: TripEvent = {
-              id: Date.now().toString(),
-              time: data.time || '10:00',
-              title: data.title || '新行程',
-              type: data.type || 'sightseeing',
-              ...data
-          } as TripEvent;
-          newEvents = [...currentEvents, newEvent];
-      }
-      
-      newEvents.sort((a, b) => a.time.localeCompare(b.time));
-      
-      const newData = [...tripData];
-      newData[currentDayIndex] = { ...newData[currentDayIndex], events: newEvents };
-      setTripData(newData);
-      
-      setIsTripModalOpen(false);
-      setEditingTripEvent(undefined);
-  };
+    <!-- 4. 新增/編輯花費 Modal -->
+    <div v-if="showExpenseModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-slide-up">
+            <h3 class="font-bold text-xl mb-4 text-slate-800">{{ editIndex !== null ? '修改紀錄' : '記一筆' }}</h3>
+            <div class="space-y-4">
+                <div class="flex space-x-2">
+                    <div class="flex-1 flex bg-gray-100 p-1 rounded-xl">
+                        <button v-for="curr in ['JPY','TWD']" @click="newExpense.currency = curr" :class="['flex-1 py-2 text-sm font-medium rounded-lg transition-all', newExpense.currency === curr ? 'bg-white text-ise-blue shadow-sm' : 'text-gray-400']">{{ curr }}</button>
+                    </div>
+                    <div class="flex-[1.5] flex bg-gray-100 p-1 rounded-xl overflow-hidden">
+                        <button v-for="pay in ['現金','信用卡','西瓜卡']" @click="newExpense.payment = pay" :class="['flex-1 py-2 text-xs font-medium rounded-lg transition-all whitespace-nowrap', newExpense.payment === pay ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-400']">{{ pay }}</button>
+                    </div>
+                </div>
+                <div class="relative">
+                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">{{ newExpense.currency === 'TWD' ? 'NT$' : '¥' }}</span>
+                    <input v-model="newExpense.amount" type="number" placeholder="0" class="w-full bg-gray-50 p-4 pl-14 rounded-xl outline-none focus:ring-2 focus:ring-ise-gold/20 text-2xl font-bold text-slate-800">
+                </div>
+                <input v-model="newExpense.name" placeholder="項目名稱" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-gold/20">
+                <div class="grid grid-cols-3 gap-2">
+                     <button v-for="cat in ['交通','飲食','住宿','門票','購物','其他']" @click="newExpense.category = cat" :class="['py-2 text-xs rounded-lg border', newExpense.category === cat ? 'bg-ise-gold text-white border-ise-gold' : 'bg-white text-gray-400 border-gray-200']">{{ cat }}</button>
+                </div>
+            </div>
+            <div class="flex space-x-3 mt-8">
+                <button @click="showExpenseModal = false" class="flex-1 py-3 text-gray-500 font-medium rounded-xl hover:bg-gray-50">取消</button>
+                <button @click="saveExpense" class="flex-1 py-3 bg-ise-gold text-white font-bold rounded-xl shadow-lg">{{ editIndex !== null ? '更新' : '儲存' }}</button>
+            </div>
+        </div>
+    </div>
 
-  const handleDeleteTripEvent = () => {
-      if (!editingTripEvent) return;
-      const currentDayIndex = tripData.findIndex(d => d.date === selectedDate);
-      if (currentDayIndex === -1) return;
+</div>
+</div>
 
-      const currentEvents = tripData[currentDayIndex].events.filter(e => e.id !== editingTripEvent.id);
-      
-      const newData = [...tripData];
-      newData[currentDayIndex] = { ...newData[currentDayIndex], events: currentEvents };
-      setTripData(newData);
-      
-      setIsTripModalOpen(false);
-      setEditingTripEvent(undefined);
-  };
+<script>
+    const { createApp, ref, computed, onMounted, watch } = Vue;
 
-  // --- Booking Handlers ---
-  const handleSaveBooking = (data: Partial<BookingItem>) => {
-      if (editingBooking) {
-          setBookings(bookings.map(b => b.id === editingBooking.id ? { ...b, ...data } as BookingItem : b));
-      } else {
-          const newBooking: BookingItem = {
-              id: Date.now().toString(),
-              type: data.type || 'hotel',
-              ...data
-          } as BookingItem;
-          setBookings([...bookings, newBooking]);
-      }
-      setIsBookingModalOpen(false);
-      setEditingBooking(undefined);
-  };
+    createApp({
+        setup() {
+            const currentTab = ref('itinerary');
+            const infoSubTab = ref('航班');
+            const selectedDateIndex = ref(0);
+            const shoppingRegion = ref('全部');
+            const isEditMode = ref(false);
+            const editIndex = ref(null);
+            
+            const showAddModal = ref(false);
+            const showInfoModal = ref(false);
+            const showShoppingModal = ref(false);
+            const showExpenseModal = ref(false);
+            const showDeleteModal = ref(false);
+            const deleteTarget = ref({ id: null, type: null });
+            
+            const weatherLoading = ref(false);
+            const currentWeather = ref({ temp: '--', text: '載入中', code: 0 });
 
-  const handleDeleteBooking = () => {
-      if (!editingBooking) return;
-      setBookings(bookings.filter(b => b.id !== editingBooking.id));
-      setIsBookingModalOpen(false);
-      setEditingBooking(undefined);
-  };
+            const saveToLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
+            
+            const ensureIds = (data) => {
+                if (Array.isArray(data)) {
+                    return data.map(item => {
+                        if (!item.id) item.id = Date.now() + Math.random();
+                        if (item.items && Array.isArray(item.items)) {
+                            item.items = ensureIds(item.items);
+                        }
+                        return item;
+                    });
+                }
+                return data;
+            };
 
-  // --- Expense Handlers ---
-  const handleSaveExpense = (data: Partial<ExpenseItem>) => {
-      if (editingExpense) {
-          setExpenses(expenses.map(e => e.id === editingExpense.id ? { ...e, ...data } as ExpenseItem : e));
-      } else {
-          const newExpense: ExpenseItem = {
-              id: Date.now().toString(),
-              date: data.date || selectedDate,
-              title: data.title || '新支出',
-              amount: data.amount || 0,
-              currency: data.currency || 'JPY',
-              category: data.category || 'other',
-              ...data
-          } as ExpenseItem;
-          setExpenses([...expenses, newExpense]);
-      }
-      setIsExpenseModalOpen(false);
-      setEditingExpense(undefined);
-  };
+            const loadFromLocal = (key, defaultData) => {
+                const data = localStorage.getItem(key);
+                let parsed = data ? JSON.parse(data) : defaultData;
+                if (Array.isArray(parsed)) parsed = ensureIds(parsed);
+                else if (parsed && typeof parsed === 'object') {
+                    for (const k in parsed) {
+                        if (Array.isArray(parsed[k])) parsed[k] = ensureIds(parsed[k]);
+                    }
+                }
+                return parsed;
+            };
 
-  const handleDeleteExpense = () => {
-      if (!editingExpense) return;
-      setExpenses(expenses.filter(e => e.id !== editingExpense.id));
-      setIsExpenseModalOpen(false);
-      setEditingExpense(undefined);
-  };
+            // 1. 行程資料 (含 Coordinates for weather)
+            // Locations:
+            // Centrair: 34.858, 136.805
+            // Matsusaka: 34.577, 136.536
+            // Shima: 34.330, 136.825
+            // Toba: 34.482, 136.843
+            // Ise: 34.487, 136.709
+            // Nagoya: 35.181, 136.906
+            // Tokoname: 34.889, 136.834
+            const defaultItinerary = [
+                {
+                    date: '1/14', dayOfWeek: 'TUE', location: '桃園 ➤ 名古屋', mainLocationName: '中部國際機場', lat: 34.858, lon: 136.805,
+                    items: [
+                        { id: 101, category: '航班', title: '前往中部國際機場', subTitle: 'JL8670', time: '15:50 ➤ 19:25', story: '日航服務周到，建議提前2小時抵達機場。' },
+                        { id: 102, category: '租車', title: '日産レンタカー中部国際空港', time: '20:00', desc: '預約號：RC22460954665223760\n車型：セレナe-POWER\n費用：¥88,902', cost: 88902, address: '日産レンタカー中部国際空港店', mapcode: '371 697 049*44', story: '位於Access Plaza 2樓，辦理手續需備妥駕照與日文譯本。' },
+                        { id: 103, category: '住宿', title: 'Hotel Castle Inn Tsu', desc: '前往飯店 Check-in\nBooking 含早 兩間客房', cost: 15496, story: '位於津市的平價商務飯店，適合自駕中繼休息。' }
+                    ]
+                },
+                {
+                    date: '1/15', dayOfWeek: 'WED', location: '津 ➤ 松阪 ➤ 志摩', mainLocationName: '松阪市', lat: 34.577, lon: 136.536,
+                    items: [
+                        { id: 201, category: '交通', title: '前往松阪', time: '09:00', desc: '停車: よいほモール第６駐車場', address: 'よいほモール第６駐車場', mapcode: '80 288 027*33', story: '車程約30分鐘，建議停在市中心方便步行。' },
+                        { id: 202, category: '景點', title: '豪商的城市觀光交流中心', time: '10:00', desc: '觀光資訊、松阪歷史文化介紹\n2F 放映室有英文字幕', mapcode: '80 288 027*33', story: '了解松阪商人歷史的最佳起點，建築本身也很有特色。' },
+                        { id: 203, category: '景點', title: '松阪木棉手織中心', desc: '體驗傳統工藝品、藍色木棉布', mapcode: '80 288 027*33', story: '江戶時代風靡一時的「松阪縞」，藍染條紋非常典雅。' },
+                        { id: 204, category: '景點', title: '舊小津清左衛門家', cost: 200, desc: '富商宅邸參觀、萬兩銀箱', mapcode: '80 289 064*11', story: '紙業大亨的豪宅，可見識到江戶富商的奢華生活。' },
+                        { id: 205, category: '景點', title: '松坂城跡', desc: '欣賞石垣與城市風景', mapcode: '80 258 791*02', story: '雖無天守閣，但壯觀的石牆被稱為「石垣的博物館」。' },
+                        { id: 206, category: '景點', title: '御城番屋敷', desc: '國家指定重要文化財', mapcode: '80 258 791*02', story: '這是當年守護松坂城的武士住宅，至今仍有人居住，非常罕見。' },
+                        { id: 207, category: '美食', title: '一升瓶 本店 (松阪牛)', time: '午餐', desc: '燒肉老店\n旋轉燒肉創始店', address: '一升びん本店', mapcode: '80 229 821*58', story: '松阪牛的必吃名店，旋轉燒肉形式有趣且價格相對親民。' },
+                        { id: 208, category: '景點', title: '横山展望台', time: '14:00', desc: '眺望英虞灣谷灣海岸\n天空咖啡露台', mapcode: '338 058 634*55', story: '米其林一星景點，能一覽英虞灣60多個小島的絕美景色。' },
+                        { id: 209, category: '景點', title: '大王崎燈塔', desc: '視時間決定\n日本燈塔50選', story: '被稱為「繪畫之鎮」，是許多畫家喜愛的寫生地點。' },
+                        { id: 210, category: '住宿', title: '志摩観光ホテル ザ ベイスイート', time: 'Check-in', desc: '一休 含早 4名1室', cost: 92640, mapcode: '338 188 485*82', story: 'G7伊勢志摩高峰會的舉辦地，頂級服務與海景是其賣點。' }
+                    ]
+                },
+                {
+                    date: '1/16', dayOfWeek: 'THU', location: '志摩 ➤ 鳥羽', mainLocationName: '鳥羽市', lat: 34.482, lon: 136.843,
+                    items: [
+                        { id: 301, category: '其他', title: '飯店早餐', time: '07:00' },
+                        { id: 302, category: '其他', title: '館內導覽', time: '09:00', desc: '歷史體驗約40分鐘、G7高峰會場' },
+                        { id: 303, category: '其他', title: '英虞灣周遊郵輪', time: '11:15', desc: '海洋計程車 (約45分)' },
+                        { id: 304, category: '景點', title: '神明神社 (石神さん)', desc: '女性祈願聖地\n必買格子星星御守', mapcode: '338 468 534*36', story: '傳說只要是女性來祈求，就能實現一個願望，非常靈驗。' },
+                        { id: 305, category: '美食', title: '海女小屋吃午餐', time: '13:15', desc: '體驗海女文化 ¥31,900/4人\n吃現烤海鮮', cost: 31900, address: '海女小屋はちまんかまど', mapcode: '338 498 155*37', story: '與現役海女圍著火爐聊天，品嚐她們親手捕撈燒烤的新鮮海產。' },
+                        { id: 306, category: '景點', title: '珍珠博物館', time: '15:00', desc: '御木本真珠島\n15:30看海女表演', mapcode: '118 536 568*71', story: '世界首次成功養殖珍珠之地，海女表演展現傳統素潛技術。' },
+                        { id: 307, category: '住宿', title: '鳥羽国際ホテル 潮路亭', time: 'Check-in', desc: '一休 含早 2名2室\n連住兩晚', cost: 142662, mapcode: '118 566 395*48', story: '以「珍珠極光浴」聞名，溫泉中含有珍珠粉，能讓肌膚閃閃發亮。' }
+                    ]
+                },
+                {
+                    date: '1/17', dayOfWeek: 'FRI', location: '伊勢神宮', mainLocationName: '伊勢市', lat: 34.487, lon: 136.709,
+                    items: [
+                        { id: 401, category: '其他', title: '飯店早餐', time: '07:00' },
+                        { id: 402, category: '景點', title: '伊勢神宮-豐受大神宮 (外宮)', time: '10:00', desc: '外宮先祭原則', mapcode: '118 549 081*58', story: '供奉衣食住守護神「豐受大御神」。參拜禮儀是左側通行。' },
+                        { id: 403, category: '景點', title: '月夜見宮', desc: '別宮 (視時間)' },
+                        { id: 404, category: '景點', title: '伊勢神宮-皇大神宮 (內宮)', time: '11:00', desc: '供奉天照大御神\n日本精神故鄉', mapcode: '118 432 193*65', story: '日本地位最高的神社。跨過宇治橋象徵從凡界進入聖界。' },
+                        { id: 405, category: '美食', title: '托福橫丁', time: '午餐', desc: '赤福、伊勢烏龍麵、豚捨可樂餅', mapcode: '118 462 121*67', story: '重現江戶時代伊勢路風情的商店街，充滿復古熱鬧的氣氛。' },
+                        { id: 406, category: '景點', title: '伊勢志摩天空道路', time: '14:00', desc: '朝熊山展望台足湯、天空郵筒', mapcode: '118 440 666*26', story: '可以一邊泡著足湯，一邊眺望伊勢灣的絕景兜風路線。' },
+                        { id: 407, category: '景點', title: '金剛證寺', desc: '守護伊勢神宮鬼門', story: '「參拜伊勢若不登朝熊，如同入佛門而不誦經」，與神宮關係密切。' },
+                        { id: 408, category: '景點', title: '夫婦岩', desc: '二見興玉神社\n祈求良緣', mapcode: '118 620 661*66', story: '大注連繩連結兩塊岩石，象徵夫婦圓滿與良緣，日出美景著名。' },
+                        { id: 409, category: '住宿', title: '鳥羽国際ホテル 潮路亭', desc: '續住' }
+                    ]
+                },
+                {
+                    date: '1/18', dayOfWeek: 'SAT', location: '鳥羽 ➤ 名古屋', mainLocationName: '名古屋市', lat: 35.181, lon: 136.906,
+                    items: [
+                        { id: 501, category: '景點', title: '鳥羽水族館', desc: '飼養種類日本第一\n視時間決定是否入內', mapcode: '118 536 442*83', story: '日本唯一飼養儒艮（美人魚原型）的水族館，展區非常豐富。' },
+                        { id: 502, category: '景點', title: '豐田產業技術紀念館', time: '13:00', desc: '名古屋市西区', mapcode: '4 345 524*32', story: '從紡織機到汽車，見證TOYOTA集團的發展史，互動性極高。' },
+                        { id: 503, category: '住宿', title: 'Comfort Hotel Nagoya Kanayama', desc: '金山站附近\n32000點數換房', cost: 5504, mapcode: '4 169 731*37' },
+                        { id: 504, category: '美食', title: '名古屋晚餐', desc: '放完行李後外出覓食' }
+                    ]
+                },
+                {
+                    date: '1/19', dayOfWeek: 'SUN', location: '名古屋市區', mainLocationName: '名古屋市', lat: 35.181, lon: 136.906,
+                    items: [
+                        { id: 601, category: '美食', title: '名古屋早餐體驗', time: '08:00', desc: '點飲料送吐司文化', story: '名古屋獨特的「Morning Service」，點咖啡就送厚片吐司與水煮蛋。' },
+                        { id: 602, category: '景點', title: '名古屋城', time: '09:30', desc: '本丸御殿、金鯱', mapcode: '4 348 601*15', story: '屋頂上的金鯱是名古屋的象徵。本丸御殿金碧輝煌，極盡奢華。' },
+                        { id: 603, category: '景點', title: '大須觀音寺', desc: '參拜觀音', mapcode: '4 258 827*14', story: '藏有國寶古事記抄本，是當地的信仰中心，紅色建築很搶眼。' },
+                        { id: 604, category: '購物', title: '大須商店街', desc: '逛街、古著、電子產品', story: '混合了次文化、古著、美食與電器的商店街，有各種異國料理。' },
+                        { id: 605, category: '景點', title: '熱田神宮', desc: '三神器之一 草薙劍', mapcode: '4 139 791*44', story: '供奉傳說中的三神器之一「草薙劍」，地位僅次於伊勢神宮。' }
+                    ]
+                },
+                {
+                    date: '1/20', dayOfWeek: 'MON', location: '名古屋 ➤ 常滑', mainLocationName: '常滑市', lat: 34.889, lon: 136.834,
+                    items: [
+                        { id: 701, category: '景點', title: '角久八丁味噌', time: '10:30', desc: '岡崎市\n參觀味噌工廠', story: 'NHK晨間劇取景地，可以參觀傳統味噌木桶，品嚐紅味噌湯。' },
+                        { id: 702, category: '其他', title: '西尾抹茶博物館', time: '13:00', desc: '已預約體驗導覽', story: '愛知縣是日本抹茶產量第一，這裡可以體驗石臼磨茶。' },
+                        { id: 703, category: '景點', title: '常滑市陶瓷器會館', time: '15:00', desc: '陶瓷器散步道起點', mapcode: '371 791 422*10', story: '常滑燒是日本六古窯之一，散步道沿途有用陶管堆砌的特色牆面。' },
+                        { id: 704, category: '景點', title: '守護貓 Tokonyan', desc: '拍照景點', mapcode: '371 790 327*34', story: '巨大的招財貓頭像，從橋上探出頭來，是常滑的地標。' },
+                        { id: 705, category: '購物', title: '永旺夢樂城常滑', desc: '最後採買\nAEON Mall', mapcode: '371 759 405*35', story: '距離機場最近的大型購物中心，有巨大的招財貓裝飾。' },
+                        { id: 706, category: '租車', title: '還車', time: '20:00', desc: '中部國際機場' },
+                        { id: 707, category: '住宿', title: 'Comfort Hotel Central Airport', desc: '機場飯店\n16000點數換房', cost: 2752 }
+                    ]
+                },
+                {
+                    date: '1/21', dayOfWeek: 'TUE', location: '名古屋 ➤ 桃園', mainLocationName: '中部國際機場', lat: 34.858, lon: 136.805,
+                    items: [
+                        { id: 801, category: '航班', title: '返回桃園', subTitle: 'JL8671', time: '12:05 ➤ 14:40' },
+                        { id: 802, category: '其他', title: '報到托運', time: '10:00' },
+                        { id: 803, category: '美食', title: '蝦仙貝之里', desc: '機場4F', story: '知多半島名產，可以試吃各種口味，是最佳伴手禮。' },
+                        { id: 804, category: '景點', title: 'FLIGHT OF DREAMS', desc: '波音787展示', story: '展示第一架波音787原型機，聲光秀非常震撼。' }
+                    ]
+                }
+            ];
 
-  // --- Must List Handlers ---
-  const handleToggleMust = (id: string) => {
-      setMustList(mustList.map(item => 
-          item.id === id ? { ...item, isCompleted: !item.isCompleted } : item
-      ));
-  };
+            const itineraryData = ref(loadFromLocal('ise_itinerary', defaultItinerary));
 
-  const handleSaveMust = (data: Partial<MustItem>) => {
-      if (editingMust) {
-          setMustList(mustList.map(item => item.id === editingMust.id ? { ...item, ...data } as MustItem : item));
-      } else {
-          const newItem: MustItem = {
-              id: Date.now().toString(),
-              type: data.type || 'eat',
-              area: data.area || '名古屋',
-              name: data.name || '',
-              note: data.note || '',
-              location: data.location || '',
-              isCompleted: false,
-              ...data
-          } as MustItem;
-          setMustList([...mustList, newItem]);
-      }
-      setIsMustModalOpen(false);
-      setEditingMust(undefined);
-  };
+            // 2. 資訊頁面資料
+            const infoData = ref(loadFromLocal('ise_info_data', {
+                flights: [
+                    { id: 1, title: 'JL8670', desc: '去程 1/14 (二)', startTime: '15:50', startLoc: 'TPE T2', endTime: '19:25', endLoc: 'NGO T1' },
+                    { id: 2, title: 'JL8671', desc: '回程 1/21 (三)', startTime: '12:05', startLoc: 'NGO T1', endTime: '14:40', endLoc: 'TPE T2' }
+                ],
+                hotels: [
+                    { id: 3, date: '1/14-15', title: 'Hotel Castle Inn Tsu', type: 'Booking 含早', price: '¥15,496', desc: '兩間客房' },
+                    { id: 4, date: '1/15-16', title: '志摩観光ホテル ザ ベイスイート', type: '一休 含早', price: '¥92,640', desc: '4名1室' },
+                    { id: 5, date: '1/16-18', title: '鳥羽国際ホテル 潮路亭', type: '一休 含早', price: '¥142,662', desc: '2名2室 (兩晚)' },
+                    { id: 6, date: '1/18-20', title: 'Comfort Hotel Nagoya Kanayama', type: 'CHOICE點數', price: '32000 pts', desc: '兩間客房' },
+                    { id: 7, date: '1/20-21', title: 'Comfort Hotel Central Airport', type: 'CHOICE點數', price: '16000 pts', desc: '兩間客房' }
+                ],
+                rentals: [
+                    { id: 8, title: '日産レンタカー', subTitle: '中部國際機場店', desc: '取車 1/14 20:00\n還車 1/20 20:00\n車型 Serena e-POWER\n預約號 RC22460954665223760' }
+                ]
+            }));
 
-  const handleDeleteMust = () => {
-      if (!editingMust) return;
-      setMustList(mustList.filter(item => item.id !== editingMust.id));
-      setIsMustModalOpen(false);
-      setEditingMust(undefined);
-  };
+            // 3. 預設必吃/必買清單 (新增故事攻略)
+            const defaultShopping = [
+                { id: 201, region: '名古屋', name: '蓬萊軒 鰻魚飯', price: '4600', story: '必吃「鰻魚三吃」：一吃原味，二吃加佐料，三吃茶泡飯。' },
+                { id: 202, region: '名古屋', name: '矢場味噌豬排', price: '1800', story: '濃厚赤味噌醬汁淋在剛炸好的豬排上，味道濃郁超下飯。' },
+                { id: 203, region: '名古屋', name: '世界的山將 手羽先', price: '600', story: '胡椒味重、香辣酥脆的炸雞翅，是名古屋最著名的下酒菜。' },
+                { id: 204, region: '名古屋', name: 'Komeda Coffee 小倉吐司', price: '500', story: '紅豆泥配上奶油與厚片吐司，名古屋流早餐的經典代表。' },
+                { id: 205, region: '托福橫丁', name: '赤福 (Akafuku)', price: '1200', story: '伊勢名物，紅豆泥包裹麻糬，象徵五十鈴川的清流。保鮮期短需盡快食用。' },
+                { id: 206, region: '托福橫丁', name: '伊勢烏龍麵 (Fukusuke)', price: '600', story: '麵條極粗且口感軟爛，拌入濃郁黑醬油，是參拜旅人好消化的食物。' },
+                { id: 207, region: '托福橫丁', name: '豚捨可樂餅', price: '200', story: '使用優質牛肉碎末製作，外酥內嫩，是橫丁最熱門的邊走邊吃美食。' },
+                { id: 208, region: '托福橫丁', name: '松阪牛串', price: '800', story: '不需花大錢也能品嚐松阪牛美味的入門選擇，油脂香氣迷人。' },
+                { id: 209, region: '伊勢志摩', name: '御木本真珠島 珍珠飾品', price: '15000', story: 'MIKIMOTO品質保證，設計優雅，是送給女性長輩或自用的頂級紀念品。' },
+                { id: 210, region: '伊勢志摩', name: '海女小屋 現烤鮑魚/龍蝦', price: '8000', story: '新鮮捕撈的貝類與伊勢龍蝦，在炭火上現烤，鮮味爆表。' },
+                { id: 211, region: '伊勢志摩', name: '伊勢龍蝦仙貝', price: '1000', story: '使用大量伊勢龍蝦肉泥烘烤，每一口都充滿濃濃海味。' }
+            ];
 
-  // --- Global FAB Handler ---
-  const handleFabClick = () => {
-      switch(activeTab) {
-          case 'schedule':
-              setEditingTripEvent(undefined);
-              setIsTripModalOpen(true);
-              break;
-          case 'bookings':
-              setEditingBooking(undefined);
-              setIsBookingModalOpen(true);
-              break;
-          case 'expense':
-              setEditingExpense(undefined);
-              setIsExpenseModalOpen(true);
-              break;
-          case 'plan':
-              setEditingMust(undefined);
-              setIsMustModalOpen(true);
-              break;
-          default:
-              break;
-      }
-  };
+            const shoppingList = ref(loadFromLocal('ise_shopping', defaultShopping));
+            const expenses = ref(loadFromLocal('ise_expense', []));
 
-  const getFabLabel = () => {
-      switch(activeTab) {
-          case 'schedule': return '新增行程';
-          case 'bookings': return '新增預訂';
-          case 'expense': return '新增支出';
-          case 'plan': return '新增必買必吃';
-          default: return '新增';
-      }
-  };
+            // Sync Expenses (Initialize)
+            if (expenses.value.length === 0) {
+                const initialExpenses = [];
+                itineraryData.value.forEach(day => {
+                    day.items.forEach(item => {
+                        if (item.cost && Number(item.cost) > 0) {
+                            initialExpenses.push({
+                                id: Date.now() + Math.random(),
+                                date: day.date,
+                                category: item.category || '其他',
+                                name: item.title,
+                                amount: Number(item.cost),
+                                payment: '現金', // 預設
+                                currency: 'JPY'
+                            });
+                        }
+                    });
+                });
+                expenses.value = initialExpenses;
+                saveToLocal('ise_expense', expenses.value);
+            }
 
-  const renderContent = () => {
-      switch(activeTab) {
-          case 'schedule':
-              return (
-                <SchedulePage 
-                    tripData={tripData}
-                    selectedDate={selectedDate}
-                    setSelectedDate={setSelectedDate}
-                    updateEventsForDay={updateEventsForDay}
-                    openModal={() => setIsTripModalOpen(true)} 
-                    setEditingEvent={setEditingTripEvent} 
-                />
-              );
-          case 'bookings':
-              return (
-                <BookingsPage 
-                    bookings={bookings} 
-                    onEdit={(item) => { setEditingBooking(item); setIsBookingModalOpen(true); }}
-                />
-              );
-          case 'expense':
-              return (
-                  <ExpensePage 
-                      expenses={expenses}
-                      exchangeRate={exchangeRate}
-                      setExchangeRate={setExchangeRate}
-                      onEdit={(item) => { setEditingExpense(item); setIsExpenseModalOpen(true); }}
-                      onAdd={() => { setEditingExpense(undefined); setIsExpenseModalOpen(true); }}
-                  />
-              );
-          case 'plan':
-              return (
-                  <MustListPage 
-                      items={mustList}
-                      onToggle={handleToggleMust}
-                      onEdit={(item) => { setEditingMust(item); setIsMustModalOpen(true); }}
-                  />
-              );
-          default:
-              return null;
-      }
-  };
+            // Models
+            const newItem = ref({ category: '景點', title: '', time: '', desc: '', cost: '', address: '', mapcode: '', story: '' });
+            const newInfo = ref({ title: '', desc: '', startTime: '', startLoc: '', endTime: '', endLoc: '', date: '', type: '', price: '', subTitle: '' });
+            const newShoppingItem = ref({ id: null, name: '', price: '', address: '', desc: '', region: '名古屋', story: '' }); 
+            const newExpense = ref({ id: null, category: '飲食', name: '', amount: '', payment: '現金', date: '', currency: 'JPY' });
 
-  return (
-    <Layout activeTab={activeTab} onTabChange={setActiveTab}>
-      {renderContent()}
-      
-      {/* Global Wide FAB */}
-      <button 
-        onClick={handleFabClick}
-        className="absolute bottom-24 left-5 right-5 h-12 bg-[#FF8C42] rounded-2xl shadow-lg flex items-center justify-center text-white font-bold gap-2 active:scale-95 transition-all z-40"
-      >
-          <Plus size={20} strokeWidth={3} />
-          {getFabLabel()}
-      </button>
+            // Computeds
+            const currentDayItinerary = computed(() => itineraryData.value[selectedDateIndex.value].items);
+            
+            const currentInfoList = computed(() => {
+                if(infoSubTab.value === '航班') return infoData.value.flights;
+                if(infoSubTab.value === '住宿') return infoData.value.hotels;
+                if(infoSubTab.value === '租車') return infoData.value.rentals;
+                return [];
+            });
 
-      {/* Schedule Modal */}
-      <TripModal 
-         isOpen={isTripModalOpen}
-         onClose={() => setIsTripModalOpen(false)}
-         onSave={handleSaveTripEvent}
-         onDelete={handleDeleteTripEvent}
-         initialData={editingTripEvent}
-      />
+            // Shopping Filter
+            const filteredShoppingList = computed(() => {
+                if (shoppingRegion.value === '全部') return shoppingList.value;
+                return shoppingList.value.filter(item => item.region === shoppingRegion.value);
+            });
 
-      {/* Booking Modal */}
-      <BookingModal 
-         isOpen={isBookingModalOpen}
-         onClose={() => setIsBookingModalOpen(false)}
-         onSave={handleSaveBooking}
-         onDelete={handleDeleteBooking}
-         initialData={editingBooking}
-      />
+            const expensesByDate = computed(() => {
+                const grouped = {};
+                const sorted = [...expenses.value].sort((a, b) => a.date.localeCompare(b.date));
+                sorted.forEach(item => {
+                    if (!grouped[item.date]) grouped[item.date] = [];
+                    grouped[item.date].push(item);
+                });
+                return grouped;
+            });
 
-      {/* Expense Modal */}
-      <ExpenseModal 
-          isOpen={isExpenseModalOpen}
-          onClose={() => setIsExpenseModalOpen(false)}
-          onSave={handleSaveExpense}
-          onDelete={handleDeleteExpense}
-          initialData={editingExpense}
-      />
+            const totalExpenseTWD = computed(() => {
+                let total = 0;
+                expenses.value.forEach(e => {
+                    if (e.currency === 'TWD') {
+                        total += Number(e.amount);
+                    } else {
+                        total += Number(e.amount) * 0.22;
+                    }
+                });
+                return Math.floor(total);
+            });
 
-      {/* Must Modal */}
-      <MustModal
-          isOpen={isMustModalOpen}
-          onClose={() => setIsMustModalOpen(false)}
-          onSave={handleSaveMust}
-          onDelete={handleDeleteMust}
-          initialData={editingMust}
-      />
-    </Layout>
-  );
-}
+            const expenseSummary = computed(() => {
+                let cash = 0, card = 0;
+                expenses.value.forEach(e => {
+                    let amountInJPY = Number(e.amount);
+                    if (e.currency === 'TWD') {
+                        amountInJPY = Number(e.amount) / 0.22;
+                    }
+                    if(e.payment === '現金') cash += amountInJPY;
+                    else card += amountInJPY;
+                });
+                return { cash: Math.floor(cash), card: Math.floor(card) };
+            });
+
+            // Methods
+            const getWeatherIcon = (code) => {
+                // WMO Weather interpretation codes (WW)
+                // 0: Clear sky
+                if (code === 0) return 'fa-solid fa-sun text-ise-gold';
+                // 1, 2, 3: Mainly clear, partly cloudy, and overcast
+                if (code <= 3) return 'fa-solid fa-cloud-sun text-gray-400';
+                // 45, 48: Fog
+                if (code <= 48) return 'fa-solid fa-smog text-gray-300';
+                // 51-57: Drizzle
+                if (code <= 57) return 'fa-solid fa-cloud-rain text-blue-300';
+                // 61-67: Rain
+                if (code <= 67) return 'fa-solid fa-cloud-showers-heavy text-blue-500';
+                // 71-77: Snow
+                if (code <= 77) return 'fa-solid fa-snowflake text-sky-200';
+                // 80-82: Rain showers
+                if (code <= 82) return 'fa-solid fa-cloud-rain text-blue-400';
+                // 95-99: Thunderstorm
+                return 'fa-solid fa-bolt text-yellow-500';
+            }
+
+            const mapWmoCode = (code) => {
+                const codes = {
+                    0: '晴朗', 1: '多雲', 2: '多雲', 3: '陰天',
+                    45: '霧', 48: '霧', 51: '毛毛雨', 53: '小雨', 55: '大雨',
+                    61: '小雨', 63: '中雨', 65: '大雨', 71: '小雪', 73: '中雪',
+                    75: '大雪', 80: '陣雨', 95: '雷雨'
+                };
+                return codes[code] || '未知';
+            }
+
+            const fetchWeather = async () => {
+                weatherLoading.value = true;
+                const targetDay = itineraryData.value[selectedDateIndex.value];
+                if (!targetDay.lat || !targetDay.lon) {
+                    currentWeather.value = { temp: '--', text: '無位置資料', code: 0 };
+                    weatherLoading.value = false;
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${targetDay.lat}&longitude=${targetDay.lon}&current_weather=true`);
+                    const data = await res.json();
+                    if(data.current_weather) {
+                        currentWeather.value = {
+                            temp: Math.round(data.current_weather.temperature),
+                            text: mapWmoCode(data.current_weather.weathercode),
+                            code: data.current_weather.weathercode
+                        };
+                    }
+                } catch (e) {
+                    console.error('Weather fetch failed', e);
+                    currentWeather.value = { temp: '--', text: '載入失敗', code: 0 };
+                } finally {
+                    weatherLoading.value = false;
+                }
+            };
+
+            const getCategoryBorderColor = (cat) => {
+                const map = {
+                    '交通': 'border-blue-400', '航班': 'border-blue-600',
+                    '飲食': 'border-orange-400', '住宿': 'border-indigo-400',
+                    '購物': 'border-pink-400', '景點': 'border-green-500',
+                    '其他': 'border-gray-300'
+                };
+                return map[cat] || map['其他'];
+            }
+
+            const getCategoryBadgeColor = (cat) => {
+                const map = {
+                    '交通': 'bg-blue-400', '飲食': 'bg-orange-400',
+                    '住宿': 'bg-indigo-400', '購物': 'bg-pink-400',
+                    '景點': 'bg-green-500', '其他': 'bg-gray-400'
+                };
+                return map[cat] || map['其他'];
+            }
+
+            const getCategoryIcon = (cat) => {
+                const map = {
+                    '交通': { icon: 'fa-train', bg: 'bg-blue-400' },
+                    '飲食': { icon: 'fa-utensils', bg: 'bg-orange-400' },
+                    '住宿': { icon: 'fa-bed', bg: 'bg-indigo-400' },
+                    '購物': { icon: 'fa-bag-shopping', bg: 'bg-pink-400' },
+                    '門票': { icon: 'fa-ticket', bg: 'bg-green-400' },
+                    '景點': { icon: 'fa-camera', bg: 'bg-green-500' },
+                    '其他': { icon: 'fa-circle', bg: 'bg-gray-400' }
+                };
+                return map[cat] || map['其他'];
+            }
+
+            const openMap = (query) => {
+                if(!query) return;
+                window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank');
+            };
+
+            const copyToClipboard = (text) => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                    alert(`MAPCODE 已複製: ${text}`);
+                } catch (err) {
+                    console.error('複製失敗', err);
+                }
+                document.body.removeChild(textarea);
+            };
+
+            const moveItem = (index, direction) => {
+                const items = currentDayItinerary.value;
+                const newIndex = index + direction;
+                if (newIndex >= 0 && newIndex < items.length) {
+                    [items[index], items[newIndex]] = [items[newIndex], items[index]];
+                    saveToLocal('ise_itinerary', itineraryData.value);
+                }
+            };
+
+            // Request delete: Open custom modal
+            const requestDelete = (id, type) => {
+                deleteTarget.value = { id, type };
+                showDeleteModal.value = true;
+            };
+
+            // Execute delete: Real logic
+            const executeDelete = () => {
+                const { id, type } = deleteTarget.value;
+                
+                if (type === 'itinerary') {
+                    const dayItems = itineraryData.value[selectedDateIndex.value].items;
+                    const idx = dayItems.findIndex(i => i.id === id);
+                    if (idx !== -1) {
+                        dayItems.splice(idx, 1);
+                        saveToLocal('ise_itinerary', itineraryData.value);
+                    }
+                } else if (type === 'info') {
+                    let list = null;
+                    if (infoSubTab.value === '航班') list = infoData.value.flights;
+                    if (infoSubTab.value === '住宿') list = infoData.value.hotels;
+                    if (infoSubTab.value === '租車') list = infoData.value.rentals;
+                    
+                    if(list) {
+                        const idx = list.findIndex(i => i.id === id);
+                        if(idx !== -1) {
+                            list.splice(idx, 1);
+                            saveToLocal('ise_info_data', infoData.value);
+                        }
+                    }
+                } else if (type === 'shopping') {
+                    const idx = shoppingList.value.findIndex(i => i.id === id);
+                    if (idx !== -1) {
+                        shoppingList.value.splice(idx, 1);
+                        saveToLocal('ise_shopping', shoppingList.value);
+                    }
+                } else if (type === 'expense') {
+                    const idx = expenses.value.findIndex(i => i.id === id);
+                    if (idx !== -1) {
+                        expenses.value.splice(idx, 1);
+                        saveToLocal('ise_expense', expenses.value);
+                    }
+                }
+                
+                showDeleteModal.value = false;
+            };
+
+            const toggleEditMode = () => {
+                isEditMode.value = !isEditMode.value;
+            };
+
+            // Modal & Edit Logic
+            const openAddModal = () => {
+                if (currentTab.value === 'itinerary') {
+                    editIndex.value = null;
+                    newItem.value = { category: '景點', title: '', time: '', desc: '', cost: '', address: '', mapcode: '', story: '' };
+                    showAddModal.value = true;
+                } else if (currentTab.value === 'info') {
+                    editIndex.value = null;
+                    newInfo.value = { title: '', desc: '', startTime: '', startLoc: '', endTime: '', endLoc: '', date: '', type: '', price: '', subTitle: '' };
+                    showInfoModal.value = true;
+                } else if (currentTab.value === 'shopping') {
+                    editIndex.value = null;
+                    newShoppingItem.value = { id: null, name: '', price: '', address: '', desc: '', region: shoppingRegion.value === '全部' ? '名古屋' : shoppingRegion.value, story: '' };
+                    showShoppingModal.value = true;
+                } else if (currentTab.value === 'expense') {
+                    editIndex.value = null;
+                    newExpense.value = { id: null, category: '飲食', name: '', amount: '', payment: '現金', date: '', currency: 'JPY' };
+                    showExpenseModal.value = true;
+                }
+            };
+
+            const openEditModal = (item, idx, type) => {
+                editIndex.value = idx;
+                if (type === 'itinerary') {
+                    newItem.value = { ...item };
+                    showAddModal.value = true;
+                } else if (type === 'info') {
+                    newInfo.value = { ...item };
+                    showInfoModal.value = true;
+                } else if (type === 'shopping') {
+                    newShoppingItem.value = { ...item };
+                    showShoppingModal.value = true;
+                } else if (type === 'expense') {
+                    newExpense.value = { ...item };
+                    showExpenseModal.value = true;
+                }
+            };
+
+            const saveItineraryItem = () => {
+                if (!newItem.value.title) return;
+                
+                if (editIndex.value !== null) {
+                    Object.assign(currentDayItinerary.value[editIndex.value], newItem.value);
+                } else {
+                    const newId = Date.now();
+                    const itemData = { id: newId, ...newItem.value };
+                    currentDayItinerary.value.push(itemData);
+
+                    const costVal = Number(newItem.value.cost);
+                    if (costVal && costVal > 0) {
+                        const today = itineraryData.value[selectedDateIndex.value].date;
+                        expenses.value.push({
+                            id: Date.now() + 1,
+                            category: newItem.value.category || '其他',
+                            name: newItem.value.title,
+                            amount: costVal,
+                            payment: '現金',
+                            currency: 'JPY',
+                            date: today
+                        });
+                        saveToLocal('ise_expense', expenses.value);
+                    }
+                }
+                saveToLocal('ise_itinerary', itineraryData.value);
+                showAddModal.value = false;
+            };
+
+            const saveInfoItem = () => {
+                if(!newInfo.value.title) return;
+                
+                let list = null;
+                if(infoSubTab.value === '航班') list = infoData.value.flights;
+                if(infoSubTab.value === '住宿') list = infoData.value.hotels;
+                if(infoSubTab.value === '租車') list = infoData.value.rentals;
+
+                if(list) {
+                    if(editIndex.value !== null) {
+                        Object.assign(list[editIndex.value], newInfo.value);
+                    } else {
+                        list.push({ id: Date.now(), ...newInfo.value });
+                    }
+                    saveToLocal('ise_info_data', infoData.value);
+                }
+                showInfoModal.value = false;
+            }
+
+            const handleImageUpload = (e) => {
+                // Image upload removed as requested
+            };
+
+            const saveShoppingItem = () => {
+                if(!newShoppingItem.value.name) return;
+                if (editIndex.value !== null) {
+                    const targetItem = shoppingList.value.find(i => i.id === newShoppingItem.value.id);
+                    if(targetItem) Object.assign(targetItem, newShoppingItem.value);
+                } else {
+                    shoppingList.value.push({ id: Date.now(), ...newShoppingItem.value});
+                }
+                saveToLocal('ise_shopping', shoppingList.value);
+                showShoppingModal.value = false;
+            };
+
+            const saveExpense = () => {
+                if(!newExpense.value.amount) return;
+                if (editIndex.value !== null) {
+                    const targetItem = expenses.value.find(i => i.id === newExpense.value.id);
+                    if(targetItem) Object.assign(targetItem, newExpense.value);
+                } else {
+                    const today = newExpense.value.date || itineraryData.value[selectedDateIndex.value].date;
+                    expenses.value.unshift({ 
+                        id: Date.now(), 
+                        date: today,
+                        ...newExpense.value 
+                    });
+                }
+                saveToLocal('ise_expense', expenses.value);
+                showExpenseModal.value = false;
+            };
+
+            // Watch for date change to fetch weather
+            watch(selectedDateIndex, () => {
+                fetchWeather();
+            });
+
+            // Force save ensured data back to storage immediately
+            onMounted(() => {
+                saveToLocal('ise_itinerary', itineraryData.value);
+                saveToLocal('ise_info_data', infoData.value);
+                saveToLocal('ise_shopping', shoppingList.value);
+                saveToLocal('ise_expense', expenses.value);
+                fetchWeather(); // Initial fetch
+            });
+
+            return {
+                currentTab, infoSubTab, selectedDateIndex, shoppingRegion,
+                itineraryData, currentDayItinerary, currentInfoList, shoppingList, filteredShoppingList, expenses, expensesByDate,
+                showAddModal, showInfoModal, showShoppingModal, showExpenseModal, showDeleteModal,
+                newItem, newInfo, newShoppingItem, newExpense, 
+                currentWeather, weatherLoading, totalExpenseTWD, expenseSummary,
+                getWeatherIcon, getCategoryBorderColor, getCategoryBadgeColor, getCategoryIcon,
+                openMap, copyToClipboard, moveItem, requestDelete, executeDelete, 
+                isEditMode, toggleEditMode, editIndex,
+                openAddModal, openEditModal, 
+                saveItineraryItem, saveInfoItem,
+                handleImageUpload, saveShoppingItem, 
+                saveExpense
+            }
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
