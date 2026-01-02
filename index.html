@@ -76,22 +76,14 @@
             </div>
         </header>
 
-        <!-- 設定提示 (如果沒有填 Key) -->
+        <!-- 設定提示 -->
         <div v-if="showConfigAlert" class="absolute inset-0 z-50 bg-slate-800/90 flex items-center justify-center p-6 text-center text-white backdrop-blur-sm">
             <div>
                 <i class="fa-solid fa-database text-5xl mb-4 text-ise-gold"></i>
                 <h2 class="text-xl font-bold mb-2">請設定 Firebase</h2>
                 <p class="text-sm opacity-80 mb-6 leading-relaxed">
-                    為了與朋友同步行程，請依照教學申請 Firebase 資料庫，並將 Key 填入程式碼中的 <code>firebaseConfig</code> 區塊。
+                    請確認程式碼中已填入正確的 Firebase Config。
                 </p>
-                <div class="bg-black/30 p-4 rounded-xl text-left text-xs font-mono text-gray-300 mb-4 overflow-x-auto">
-                    const firebaseConfig = {<br>
-                    &nbsp;&nbsp;apiKey: "...",<br>
-                    &nbsp;&nbsp;authDomain: "...",<br>
-                    &nbsp;&nbsp;projectId: "...",<br>
-                    &nbsp;&nbsp;...<br>
-                    };
-                </div>
             </div>
         </div>
 
@@ -109,6 +101,7 @@
                     </div>
                 </div>
 
+                <!-- 天氣 Widget (整合 Open-Meteo API) -->
                 <div class="bg-white rounded-3xl p-5 mb-6 flex items-center justify-between card-shadow border border-gray-100">
                     <div class="flex items-center space-x-4">
                         <div class="w-12 h-12 rounded-full bg-ise-gold/10 flex items-center justify-center text-ise-gold text-2xl relative">
@@ -244,12 +237,19 @@
                     <div class="relative z-10">
                         <div class="text-xs opacity-70 mb-1 uppercase tracking-widest">Total Expenses (Est. TWD)</div>
                         <div class="text-4xl font-bold font-mono tracking-tight mb-4">NT$ {{ totalExpenseTWD.toLocaleString() }}</div>
-                        <div class="flex space-x-3">
+                        <div class="flex space-x-3 mb-2">
                             <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">CASH (JPY)</div><div class="font-bold text-sm">¥{{ expenseSummary.cash.toLocaleString() }}</div></div>
                             <div class="bg-white/10 backdrop-blur-md px-3 py-2 rounded-lg flex-1"><div class="text-[10px] opacity-60">CARD (JPY)</div><div class="font-bold text-sm">¥{{ expenseSummary.card.toLocaleString() }}</div></div>
                         </div>
+                        
+                        <!-- 手動匯率設定 -->
+                        <div class="flex items-center justify-end">
+                            <label class="text-[10px] opacity-60 mr-2">匯率設定:</label>
+                            <input type="number" step="0.001" v-model="exchangeRate" class="bg-white/20 text-white w-16 text-xs px-2 py-1 rounded text-center outline-none focus:bg-white/30 font-mono">
+                        </div>
                     </div>
                 </div>
+
                 <div class="bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.03)] min-h-[500px] p-5 -mx-5">
                     <div class="flex justify-between items-center mb-6 px-2"><h3 class="font-bold text-slate-800">近期消費</h3><span class="text-xs text-gray-400">{{ expenses.length }} 筆紀錄</span></div>
                     <div class="space-y-5">
@@ -362,6 +362,15 @@
         <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-slide-up">
             <h3 class="font-bold text-xl mb-4 text-slate-800">{{ editIndex !== null ? '修改紀錄' : '記一筆' }}</h3>
             <div class="space-y-4">
+                <!-- 新增日期選擇欄位 -->
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 ml-1">日期</label>
+                    <select v-model="newExpense.date" class="w-full bg-gray-50 p-3 rounded-xl outline-none focus:ring-2 focus:ring-ise-gold/20 text-slate-800">
+                         <option v-for="day in itineraryData" :key="day.date" :value="day.date">
+                             {{ day.date }} {{ day.dayOfWeek }}
+                         </option>
+                    </select>
+                </div>
                 <div class="flex space-x-2">
                     <div class="flex-1 flex bg-gray-100 p-1 rounded-xl"><button v-for="curr in ['JPY','TWD']" @click="newExpense.currency = curr" :class="['flex-1 py-2 text-sm font-medium rounded-lg transition-all', newExpense.currency === curr ? 'bg-white text-ise-blue shadow-sm' : 'text-gray-400']">{{ curr }}</button></div>
                     <div class="flex-[1.5] flex bg-gray-100 p-1 rounded-xl overflow-hidden"><button v-for="pay in ['現金','信用卡','西瓜卡']" @click="newExpense.payment = pay" :class="['flex-1 py-2 text-xs font-medium rounded-lg transition-all whitespace-nowrap', newExpense.payment === pay ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-400']">{{ pay }}</button></div>
@@ -564,6 +573,7 @@
             const shoppingList = ref(defaultShopping);
             const expenses = ref([]);
             const infoData = ref(defaultInfo);
+            const exchangeRate = ref(0.22); // Default exchange rate
 
             // UI 狀態
             const showAddModal = ref(false);
@@ -598,7 +608,10 @@
                     // 監聽資料變更 (Realtime Sync)
                     // 1. 行程
                     onSnapshot(doc(db, "ise_trip", "itinerary"), (doc) => {
-                        if (doc.exists()) itineraryData.value = doc.data().list;
+                        if (doc.exists()) {
+                            itineraryData.value = doc.data().list;
+                            syncItineraryToExpenses(); // Sync expenses after itinerary loads
+                        }
                         else setDoc(doc.ref, { list: defaultItinerary }); // 初始化
                     });
                     // 2. 必買
@@ -631,6 +644,38 @@
                 updateDoc(doc(db, "ise_trip", collectionName), payload).catch(e => console.error(e));
             };
 
+            // Sync Logic
+            const syncItineraryToExpenses = () => {
+                let changed = false;
+                itineraryData.value.forEach(day => {
+                    day.items.forEach(item => {
+                        const cost = Number(item.cost);
+                        if (cost > 0) {
+                            // Check if expense exists for this itinerary item ID
+                            // Using a simple check: is there an expense with same ID?
+                            // Or better, let's assume we want to add it if it's NOT in expenses list by some logic.
+                            // But previous logic added expenses with unique IDs.
+                            // To avoid duplicates, let's check if there is an expense with matching name and amount on that date.
+                            const exists = expenses.value.some(e => e.date === day.date && e.name === item.title && Number(e.amount) === cost);
+                            
+                            if (!exists) {
+                                expenses.value.push({
+                                    id: Date.now() + Math.random(), // Unique ID for expense
+                                    date: day.date,
+                                    category: item.category || '其他',
+                                    name: item.title,
+                                    amount: cost,
+                                    payment: '現金', // Default
+                                    currency: 'JPY'
+                                });
+                                changed = true;
+                            }
+                        }
+                    });
+                });
+                if(changed && db) saveToFirebase('expenses', expenses.value);
+            };
+
             // ---- 計算屬性 ----
             const currentDayItinerary = computed(() => itineraryData.value[selectedDateIndex.value].items);
             const currentInfoList = computed(() => {
@@ -656,7 +701,7 @@
                 let total = 0;
                 expenses.value.forEach(e => {
                     if (e.currency === 'TWD') total += Number(e.amount);
-                    else total += Number(e.amount) * 0.22;
+                    else total += Number(e.amount) * exchangeRate.value;
                 });
                 return Math.floor(total);
             });
@@ -664,7 +709,7 @@
                 let cash = 0, card = 0;
                 expenses.value.forEach(e => {
                     let amountInJPY = Number(e.amount);
-                    if (e.currency === 'TWD') amountInJPY = Number(e.amount) / 0.22;
+                    if (e.currency === 'TWD') amountInJPY = Number(e.amount) / exchangeRate.value;
                     if(e.payment === '現金') cash += amountInJPY;
                     else card += amountInJPY;
                 });
@@ -760,7 +805,9 @@
                     newShoppingItem.value = { id: null, name: '', price: '', address: '', desc: '', region: shoppingRegion.value === '全部' ? '名古屋' : shoppingRegion.value, story: '' };
                     showShoppingModal.value = true;
                 } else if (currentTab.value === 'expense') {
-                    newExpense.value = { id: null, category: '飲食', name: '', amount: '', payment: '現金', date: '', currency: 'JPY' };
+                    // Default to the currently viewed date in itinerary, or the first day
+                    const defaultDate = itineraryData.value[selectedDateIndex.value]?.date || itineraryData.value[0].date;
+                    newExpense.value = { id: null, category: '飲食', name: '', amount: '', payment: '現金', date: defaultDate, currency: 'JPY' };
                     showExpenseModal.value = true;
                 }
             };
@@ -815,17 +862,33 @@
                     const targetItem = expenses.value.find(i => i.id === newExpense.value.id);
                     if(targetItem) Object.assign(targetItem, newExpense.value);
                 } else {
-                    const today = newExpense.value.date || itineraryData.value[selectedDateIndex.value].date;
-                    expenses.value.unshift({ id: Date.now(), date: today, ...newExpense.value });
+                    // Date is now selectable via dropdown
+                    expenses.value.unshift({ 
+                        id: Date.now(), 
+                        ...newExpense.value 
+                    });
                 }
                 saveToFirebase('expenses', expenses.value);
                 showExpenseModal.value = false;
             };
-
+            
+            // Watchers and lifecycle
             watch(selectedDateIndex, fetchWeather);
+            watch(exchangeRate, (newVal) => {
+                localStorage.setItem('ise_exchange_rate', newVal);
+            });
+            
             onMounted(() => {
+                const savedRate = localStorage.getItem('ise_exchange_rate');
+                if (savedRate) exchangeRate.value = Number(savedRate);
+                
                 initFirebase(); // 啟動時連線 Firebase
                 fetchWeather();
+                
+                // If not using Firebase, we might want to run sync here too for local data
+                if (!firebaseConfig.apiKey) {
+                    syncItineraryToExpenses();
+                }
             });
 
             return {
@@ -833,7 +896,7 @@
                 itineraryData, currentDayItinerary, currentInfoList, shoppingList, filteredShoppingList, expenses, expensesByDate,
                 showAddModal, showInfoModal, showShoppingModal, showExpenseModal, showDeleteModal,
                 newItem, newInfo, newShoppingItem, newExpense, showConfigAlert, isConnected,
-                currentWeather, weatherLoading, totalExpenseTWD, expenseSummary,
+                currentWeather, weatherLoading, totalExpenseTWD, expenseSummary, exchangeRate,
                 getWeatherIcon, getCategoryBorderColor, getCategoryBadgeColor, getCategoryIcon,
                 openMap, copyToClipboard, moveItem, requestDelete, executeDelete, 
                 isEditMode, toggleEditMode, editIndex,
